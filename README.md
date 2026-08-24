@@ -34,9 +34,8 @@ fields two people have to keep in sync by hand.
 
 | path | what it is |
 |---|---|
-| [`dist/`](dist/) | **ready-to-use — start here.** Compiled plugin, userscript, installer, master key preview, its own README |
+| [`dist/`](dist/) | **ready-to-use — start here.** Compiled plugin, userscript source (`viewer/`), installer, master key preview, its own README |
 | [`obs-scramble/`](obs-scramble/) | the OBS filter plugin's C source + CMake build |
-| [`userscript/`](userscript/) | the viewer-side descrambler script's source |
 | [`SPEC/`](SPEC/) | the contract both sides implement (PRNG, permutation math, pipeline order) |
 | [`test/`](test/) | the automated Node round-trip suite (`roundtrip.mjs`) and its golden fixtures |
 
