@@ -22,6 +22,7 @@ that's the intended, working state, not a bug.
 | `plugin/obs-scramble/` | the compiled OBS Studio filter plugin (scrambles the stream) |
 | `viewer/wtv-descramble.user.js` | the Tampermonkey userscript (descrambles it in a browser) |
 | `master-key-preview.html` | a standalone page to preview/tune a key offline, no install needed |
+| `perf-bench.html` | a standalone benchmark for diagnosing descrambler performance in your browser |
 | `install.ps1` / `install.bat` | installer for the OBS plugin (Windows) |
 | `README.md` | this file |
 
@@ -164,6 +165,10 @@ its file picker.
   Get the whole `dist` folder again rather than just the script.
 - **Installer says it can't copy the files** — OBS is probably running and has the plugin DLL
   locked. Fully close OBS (check the system tray too) and run the installer again.
+- **Viewer gets choppy video / audio skips with Block Permute on** — update the userscript
+  (v1.2.1 fixed a severe Firefox-specific slowdown at higher grid sizes). Still laggy?
+  Double-click `perf-bench.html` — it measures the descrambler's per-frame cost in your exact
+  browser and prints the numbers, which is exactly what to share when reporting the problem.
 - **Viewer sees a red banner instead of scrambled or clear video** — the key's contract
   `version` doesn't match what the script expects. Double-check the Master String you were
   given rather than hand-editing it.
