@@ -15,6 +15,7 @@
     --accent: #5eb0ff;
     --good: #4ade80;
     --bad: #f87171;
+    --gl: #c084fc;
     --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
     --sans: -apple-system, "Segoe UI", Roboto, ui-sans-serif, system-ui, sans-serif;
   }
@@ -159,6 +160,13 @@
   }
   tr.pipeline-old td.pname { color: #ffb454; }
   tr.pipeline-new td.pname { color: var(--good); }
+  tr.pipeline-gl td.pname { color: var(--gl); }
+  td.unavailable {
+    color: var(--bad);
+    font-style: italic;
+    font-family: var(--sans);
+    white-space: normal;
+  }
   .verdict {
     margin-top: 14px;
     padding: 12px 14px;
@@ -189,16 +197,37 @@
     border-radius: 999px;
     margin: 2px 4px 2px 0;
   }
+  .canvas-box.unavailable canvas { opacity: 0.32; }
+  .canvas-box .gl-status {
+    display: none;
+    font-size: 0.78rem;
+    color: var(--bad);
+    margin-top: 5px;
+    line-height: 1.4;
+  }
+  .canvas-box.unavailable .gl-status { display: block; }
+  .gpu-inclusive-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 0.83rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .gpu-inclusive-row input { margin-top: 3px; }
 </style>
 </head>
 <body>
 
   <h1>wtv-scramble &mdash; render pipeline benchmark</h1>
   <p class="subtitle">
-    Standalone A/B benchmark of the Block&nbsp;Permute render path: the shipped v1.2.0
-    pipeline (<b>Pipeline&nbsp;A</b>, many <code>&lt;video&gt;</code> reads per frame) vs. the
-    fixed pipeline (<b>Pipeline&nbsp;B</b>, exactly one <code>&lt;video&gt;</code> read per frame).
-    Runs entirely in this tab &mdash; no server, no network, nothing to install.
+    Standalone A/B/C benchmark of the Block&nbsp;Permute render path: the shipped v1.2.0
+    pipeline (<b>Pipeline&nbsp;A</b>, many <code>&lt;video&gt;</code> reads per frame), the
+    v1.2.1 fix (<b>Pipeline&nbsp;B</b>, one <code>&lt;video&gt;</code> read per frame via an
+    offscreen snapshot canvas), and the v1.3.0 candidate (<b>Pipeline&nbsp;C</b>, a single-draw
+    WebGL fragment-shader gather). Runs entirely in this tab &mdash; no server, no network,
+    nothing to install.
   </p>
 
   <div class="card">
@@ -209,24 +238,38 @@
       once and reuses it for the rest of that task. The shipped renderer draws straight from
       the <code>&lt;video&gt;</code> element 1&nbsp;(base layer) + grid&sup2; (tiles) times per
       frame &mdash; 82 reads at grid&nbsp;9 &mdash; so its cost scales with grid&sup2; against the
-      most expensive possible source. The fix snapshots the video into an offscreen canvas
-      <b>once</b> per frame, then sources every tile from that canvas instead.
+      most expensive possible source. The v1.2.1 fix snapshots the video into an offscreen
+      canvas <b>once</b> per frame, then sources every tile from that canvas instead &mdash; but
+      field reports say Firefox still shows frametime lag and occasional freezes, most likely
+      because that offscreen snapshot canvas is not in the DOM and can end up software-backed
+      (a per-frame GPU&rarr;CPU download), and because IVS adaptive-bitrate rendition switches
+      change <code>videoWidth</code>/<code>videoHeight</code> mid-stream, forcing a canvas
+      backing reallocation. Pipeline C tests the fix for both: one GPU-resident video texture
+      per frame, a render target whose size is <em>not</em> derived from the video's dimensions,
+      and the entire tile permutation done in a single draw call on the GPU.
     </p>
     <ul>
       <li><b>Pipeline A (old, v1.2.0 structure):</b> 1&times; <code>drawImage(video)</code>
         full-frame base layer into an intermediate canvas, + grid&sup2;&times;
         <code>drawImage(video, tile&hellip;)</code> into that same canvas, + 1&times; final
         blit of that canvas onto the visible canvas.</li>
-      <li><b>Pipeline B (new, fixed):</b> 1&times; <code>drawImage(video)</code> into a reused
-        offscreen snapshot canvas, + up to 2&times; border-strip copies <em>from the
+      <li><b>Pipeline B (new, 2D fix, v1.2.1):</b> 1&times; <code>drawImage(video)</code> into a
+        reused offscreen snapshot canvas, + up to 2&times; border-strip copies <em>from the
         snapshot</em>, + grid&sup2;&times; tile copies <em>from the snapshot</em> straight onto
         the visible canvas. Zero further video-element reads that frame.</li>
+      <li><b>Pipeline C (new, WebGL, v1.3.0 candidate):</b> 1&times; <code>texImage2D(video)</code>
+        upload into a reused video texture, + 1&times; <code>drawArrays</code> covering the
+        whole canvas. The fragment shader gathers every output tile in parallel: for output
+        tile <var>i</var> it samples the scrambled video texture at tile <code>perm[i]</code>,
+        looked up from a small perm-lookup texture. Invert and flip stay pure CSS on the
+        visible canvas in every pipeline &mdash; the shader only does the tile permutation.</li>
     </ul>
     <p class="muted">
-      Both pipelines use the identical permutation, identical tile rects, and the identical
-      synthetic source frame stream &mdash; the <em>only</em> variable under test is whether
-      tiles are sourced from the <code>&lt;video&gt;</code> element or from a pre-snapshotted
-      <code>&lt;canvas&gt;</code>.
+      All three pipelines use the identical permutation, identical tile geometry, and the
+      identical synthetic source frame stream &mdash; the <em>only</em> variable under test is
+      how each pipeline gets scrambled pixels onto the visible canvas. If WebGL is unavailable
+      in this browser (or fails at runtime), Pipeline C is reported as <code>unavailable</code>
+      and A/B still run normally.
     </p>
   </div>
 
@@ -236,13 +279,24 @@
       Synthesizes its own animated video locally (canvas &rarr;
       <code>captureStream(30)</code>) &mdash; nothing is downloaded and nothing leaves this
       tab. Tests grid&nbsp;9 then grid&nbsp;3, each pipeline timed for 5 seconds, first 10
-      frames of every window discarded as warmup. Takes about 20 seconds total.
+      frames of every window discarded as warmup. Takes about 30 seconds total (3 pipelines
+      &times; 2 grids &times; 5s).
     </p>
     <div class="controls">
       <button id="startBtn">Start benchmark</button>
       <button id="copyBtn" class="secondary" style="display:none;">Copy results as text</button>
       <span id="status"></span>
     </div>
+
+    <label class="gpu-inclusive-row">
+      <input type="checkbox" id="gpuInclusiveChk">
+      <span>Include <code>gl.finish()</code> in Pipeline&nbsp;C's timed region (GPU-inclusive
+        timing). GPU work is asynchronous, so by default the WebGL numbers below measure only
+        the CPU cost of <em>submitting</em> the draw call, not how long the GPU takes to finish
+        it &mdash; check this to force a wait for actual completion and measure true GPU-inclusive
+        cost instead. Off by default because that wait is itself unrepresentative of the real
+        renderer, which never blocks on the GPU.</span>
+    </label>
 
     <div class="canvas-row">
       <div class="canvas-box" id="boxOld">
@@ -254,6 +308,12 @@
         <div class="label"><span class="dot"></span> Pipeline B &mdash; new (canvas-sourced tiles)</div>
         <canvas id="canvasNew" width="1280" height="720"></canvas>
         <div class="caption">One video snapshot per frame; border strips + tiles drawn straight onto this visible canvas.</div>
+      </div>
+      <div class="canvas-box" id="boxGl">
+        <div class="label"><span class="dot"></span> Pipeline C &mdash; WebGL (new)</div>
+        <canvas id="canvasGl" width="1280" height="720"></canvas>
+        <div class="caption">One video-texture upload per frame; single draw call gathers every tile via the permutation shader. Render target size is fixed, not re-derived from the video each frame.</div>
+        <div class="gl-status" id="glStatus"></div>
       </div>
     </div>
   </div>
@@ -283,9 +343,10 @@
     <span class="badge">no fetch / XHR / WebSocket</span>
     <span class="badge">no CDN or remote assets</span>
     <span class="badge">file:// safe</span>
+    <span class="badge">no OAuth / crossOrigin</span>
     <br>
-    Everything on this page &mdash; math, video synthesis, both render pipelines, timing &mdash;
-    is inlined in one file. View source to verify.
+    Everything on this page &mdash; math, video synthesis, all three render pipelines
+    (2D &times;2, WebGL), timing &mdash; is inlined in one file. View source to verify.
   </footer>
 
 <script>
@@ -551,6 +612,355 @@
   }
 
   // =========================================================================
+  // Pipeline C — WebGL candidate matching the planned v1.3.0 userscript
+  // renderer. One reused video texture + one reused perm-lookup texture,
+  // single draw call per frame. The fragment shader does ONLY the tile
+  // permutation gather — invert/flip remain pure CSS on the visible canvas
+  // in every pipeline (there is no CSS filter applied on this bench page at
+  // all, since none of A/B/C need one to prove the point under test; the
+  // shader below is written the same way the real one will be).
+  //
+  // Gather direction (SPEC/contract.md "Which array does which renderer
+  // use?"): for OUTPUT tile i, sample the SCRAMBLED source at slot perm[i].
+  // NOT inv. See buildPermutation()'s comment above — perm[i] is reused
+  // directly as that gather index, exactly like renderOld/renderNew do.
+  // =========================================================================
+
+  const GL_VS_SOURCE = [
+    'attribute vec2 aPosition;',
+    'varying vec2 vUv;',
+    'void main() {',
+    // vUv.y=0 at the TOP of the canvas, vUv.y=1 at the bottom — matches the
+    // y-down convention used by tileRect()/geom.rects (row 0 = top) and by
+    // texImage2D uploads with UNPACK_FLIP_Y_WEBGL left at its default
+    // (false), where texture v=0 already holds the source's first (top)
+    // scanline. Keeping both in the same convention means no flip is needed
+    // anywhere else.
+    '  vUv = vec2(aPosition.x * 0.5 + 0.5, 0.5 - aPosition.y * 0.5);',
+    '  gl_Position = vec4(aPosition, 0.0, 1.0);',
+    '}'
+  ].join('\n');
+
+  const GL_FS_SOURCE = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
+    'precision mediump float;',
+    '#endif',
+    '',
+    'varying vec2 vUv;',
+    'uniform sampler2D uVideo;',
+    'uniform sampler2D uPerm;',
+    'uniform float uGrid;',
+    'uniform vec2 uUsedUv;',     // fraction of the frame (per axis) covered by the evenly-divisible grid
+    'uniform vec2 uVideoTexel;', // 1/videoWidth, 1/videoHeight, for the half-texel seam clamp
+    '',
+    'void main() {',
+    '  vec2 uv = vUv;',
+    '',
+    '  // Remainder border: the < grid-px-per-axis strip left over when the',
+    '  // video resolution does not divide evenly by grid. Mirrored here as a',
+    '  // uv-space fraction (uUsedUv) since the render target size is',
+    '  // decoupled from the video size (P2) and cannot be compared in raw',
+    '  // pixels. Pixels outside the permuted region pass through unpermuted,',
+    '  // exactly like the OBS shader and the 2D path above.',
+    '  if (uv.x >= uUsedUv.x || uv.y >= uUsedUv.y) {',
+    '    gl_FragColor = texture2D(uVideo, uv);',
+    '    return;',
+    '  }',
+    '',
+    '  // Which OUTPUT tile is this fragment in, and how far across it (0..1)?',
+    '  vec2 gridUv = (uv / uUsedUv) * uGrid;',
+    '  vec2 tileCoord = floor(gridUv + 0.0001);', // epsilon guards exact tile-boundary float jitter
+    '  vec2 frac = gridUv - tileCoord;',
+    '',
+    '  // perm lookup texture is grid x grid, NEAREST, no mips; index encoded',
+    '  // across R and G bytes (index = R + G*256) so WebGL1 suffices — no',
+    '  // float textures, no WebGL2 requirement. i = output tile index.',
+    '  vec2 permUv = (tileCoord + 0.5) / uGrid;',
+    '  vec4 enc = texture2D(uPerm, permUv);',
+    '  float idx = floor(enc.r * 255.0 + 0.5) + floor(enc.g * 255.0 + 0.5) * 256.0;',
+    '',
+    '  // Row/col of the SOURCE tile perm[i], derived from a single floor()',
+    '  // so col is always consistent with row (avoids GLSL mod() rounding',
+    '  // differently than our own floor() right at exact multiples of grid).',
+    '  float srcRow = floor(idx / uGrid + 0.0001);',
+    '  float srcCol = idx - srcRow * uGrid;',
+    '',
+    '  vec2 tileSpan = uUsedUv / uGrid;',
+    '  vec2 tileMin = vec2(srcCol, srcRow) * tileSpan;',
+    '  vec2 tileMax = tileMin + tileSpan;',
+    '  vec2 srcUv = tileMin + frac * tileSpan;',
+    '',
+    '  // Seam clamp: render target size is decoupled from video size (P2),',
+    '  // so LINEAR sampling near an output-tile boundary could bleed a pixel',
+    '  // in from the NEIGHBORING SOURCE TILE of the scrambled frame (a',
+    '  // visible wrong-colored seam). Clamp inside the source tile by a',
+    '  // half-texel, in VIDEO texture space.',
+    '  vec2 halfTexel = uVideoTexel * 0.5;',
+    '  srcUv = clamp(srcUv, tileMin + halfTexel, tileMax - halfTexel);',
+    '',
+    '  gl_FragColor = texture2D(uVideo, srcUv);',
+    '}'
+  ].join('\n');
+
+  function createGlShader(gl, type, source) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, source);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(sh);
+      gl.deleteShader(sh);
+      throw new Error('shader compile failed: ' + log);
+    }
+    return sh;
+  }
+
+  function createGlProgram(gl, vsSource, fsSource) {
+    const vs = createGlShader(gl, gl.VERTEX_SHADER, vsSource);
+    const fs = createGlShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const log = gl.getProgramInfoLog(prog);
+      gl.deleteProgram(prog);
+      throw new Error('program link failed: ' + log);
+    }
+    return prog;
+  }
+
+  const pGl = {
+    canvas: document.getElementById('canvasGl'),
+    gl: null,
+    program: null,
+    quadBuf: null,
+    videoTex: null,
+    permTex: null,
+    aPositionLoc: null,
+    uVideoLoc: null,
+    uPermLoc: null,
+    uGridLoc: null,
+    uUsedUvLoc: null,
+    uVideoTexelLoc: null,
+    available: false,
+    lost: false,
+    unavailableReason: '',
+    gpuInclusive: false, // set from the checkbox at the start of each run
+  };
+
+  let permTexCache = { seed: null, grid: null };
+  let glGeomCache = null; // { grid, vw, vh, usedUvX, usedUvY } — rebuilt only on change
+
+  // P2 (ABR-proof sizing): the WebGL render target's backing size is set
+  // ONCE here, never re-derived from video.videoWidth/videoHeight inside
+  // the render loop. That decoupling is the whole point under test — an
+  // IVS rendition switch that changes videoWidth/videoHeight mid-stream
+  // must not force a canvas backing reallocation (and geometry cache
+  // rebuild) in WebGL mode the way it still does for pipelines A and B.
+  function setupGlCanvasSize() {
+    // Fixed to match the visible size of the A/B canvases so all three are
+    // a fair, same-resolution comparison. In the real userscript this would
+    // instead be a user-configurable / performance-mode-driven target size
+    // (P3) — never the video's own, ABR-mutable dimensions.
+    pGl.canvas.width = 1280;
+    pGl.canvas.height = 720;
+  }
+
+  function initGl() {
+    const canvas = pGl.canvas;
+    const attrs = {
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      preserveDrawingBuffer: false,
+      powerPreference: 'high-performance',
+    };
+    let gl = null;
+    try {
+      gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+    } catch (e) {
+      gl = null;
+    }
+    if (!gl) {
+      pGl.gl = null;
+      pGl.available = false;
+      pGl.unavailableReason = 'no WebGL context available in this browser';
+      return;
+    }
+    pGl.gl = gl;
+
+    let program;
+    try {
+      program = createGlProgram(gl, GL_VS_SOURCE, GL_FS_SOURCE);
+    } catch (e) {
+      pGl.available = false;
+      pGl.unavailableReason = (e && e.message) ? e.message : String(e);
+      return;
+    }
+    pGl.program = program;
+    pGl.aPositionLoc = gl.getAttribLocation(program, 'aPosition');
+    pGl.uVideoLoc = gl.getUniformLocation(program, 'uVideo');
+    pGl.uPermLoc = gl.getUniformLocation(program, 'uPerm');
+    pGl.uGridLoc = gl.getUniformLocation(program, 'uGrid');
+    pGl.uUsedUvLoc = gl.getUniformLocation(program, 'uUsedUv');
+    pGl.uVideoTexelLoc = gl.getUniformLocation(program, 'uVideoTexel');
+
+    pGl.quadBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, pGl.quadBuf);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+      gl.STATIC_DRAW
+    );
+
+    // Global unpack state — set once here, not per frame. Both textures
+    // (video, perm) are uploaded with row 0 = top scanline / top grid row,
+    // matching tileRect()'s y-down convention; see GL_VS_SOURCE's comment.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+
+    pGl.videoTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, pGl.videoTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    pGl.permTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, pGl.permTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    permTexCache = { seed: null, grid: null }; // force rebuild after (re)init
+    glGeomCache = null;
+    setupGlCanvasSize();
+
+    pGl.available = true;
+    pGl.lost = false;
+    pGl.unavailableReason = '';
+  }
+
+  // Context loss handling: stop using GL immediately on loss, rebuild all GL
+  // state on restore, and fall back to "unavailable" if restore itself fails.
+  pGl.canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault();
+    pGl.lost = true;
+    pGl.available = false;
+    pGl.unavailableReason = 'WebGL context lost';
+    console.warn('[perf-bench] Pipeline C: WebGL context lost.');
+  }, false);
+  pGl.canvas.addEventListener('webglcontextrestored', function () {
+    console.warn('[perf-bench] Pipeline C: WebGL context restored, rebuilding GL state.');
+    try {
+      initGl();
+    } catch (e) {
+      pGl.available = false;
+      pGl.unavailableReason = 'context restore failed: ' + ((e && e.message) ? e.message : String(e));
+    }
+  }, false);
+
+  initGl();
+
+  function ensurePermTexture(grid, perm) {
+    if (permTexCache.seed === SEED && permTexCache.grid === grid) return;
+    const gl = pGl.gl;
+    const n = grid * grid;
+    const data = new Uint8Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const p = perm[i];
+      data[i * 4 + 0] = p & 0xff;        // R = low byte
+      data[i * 4 + 1] = (p >> 8) & 0xff; // G = high byte (index = R + G*256)
+      data[i * 4 + 2] = 0;
+      data[i * 4 + 3] = 255;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, pGl.permTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, grid, grid, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    permTexCache = { seed: SEED, grid: grid };
+  }
+
+  function getGlGeometry(grid, vw, vh) {
+    if (glGeomCache && glGeomCache.grid === grid && glGeomCache.vw === vw && glGeomCache.vh === vh) {
+      return glGeomCache;
+    }
+    const tileW = Math.floor(vw / grid);
+    const tileH = Math.floor(vh / grid);
+    const usedW = tileW * grid;
+    const usedH = tileH * grid;
+    glGeomCache = { grid: grid, vw: vw, vh: vh, usedUvX: usedW / vw, usedUvY: usedH / vh };
+    return glGeomCache;
+  }
+
+  function renderGl(video, grid, perm) {
+    if (!pGl.available || pGl.lost) {
+      throw new Error(pGl.unavailableReason || 'WebGL unavailable');
+    }
+    const gl = pGl.gl;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+
+    ensurePermTexture(grid, perm);
+    const geom = getGlGeometry(grid, vw, vh);
+
+    // The ONE per-frame video read: upload straight into the reused GPU
+    // texture. captureStream-sourced video here is same-origin so this will
+    // not throw in this benchmark — but the real w.tv page plays via MSE
+    // (IVS wasm worker appending to SourceBuffers) with cross-origin-fetched
+    // media, so this is wrapped defensively exactly as production must be:
+    // try/catch AND an explicit gl.getError() check, surfacing any failure
+    // in the C column rather than breaking A/B. video.crossOrigin is never
+    // set (that can break IVS playback).
+    gl.bindTexture(gl.TEXTURE_2D, pGl.videoTex);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+      const err = gl.getError();
+      if (err !== gl.NO_ERROR) {
+        throw new Error('gl error 0x' + err.toString(16) + ' during video texImage2D');
+      }
+    } catch (e) {
+      pGl.available = false;
+      pGl.unavailableReason = 'video texImage2D failed: ' + ((e && e.message) ? e.message : String(e));
+      console.warn('[perf-bench] Pipeline C disabled: ' + pGl.unavailableReason);
+      throw e;
+    }
+
+    gl.useProgram(pGl.program);
+    gl.viewport(0, 0, pGl.canvas.width, pGl.canvas.height);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, pGl.videoTex);
+    gl.uniform1i(pGl.uVideoLoc, 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, pGl.permTex);
+    gl.uniform1i(pGl.uPermLoc, 1);
+
+    gl.uniform1f(pGl.uGridLoc, grid);
+    gl.uniform2f(pGl.uUsedUvLoc, geom.usedUvX, geom.usedUvY);
+    gl.uniform2f(pGl.uVideoTexelLoc, 1 / vw, 1 / vh);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, pGl.quadBuf);
+    gl.enableVertexAttribArray(pGl.aPositionLoc);
+    gl.vertexAttribPointer(pGl.aPositionLoc, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // Timing note: GPU work submitted above is asynchronous, so without
+    // gl.finish() the t1-t0 window around this call (see runWindow) mostly
+    // measures CPU-side submission cost, not GPU completion time. The
+    // gl.finish()-toggle checkbox forces a real wait so a curious user can
+    // measure true GPU-inclusive cost instead; it is OFF by default because
+    // the shipped renderer itself never blocks on the GPU like this.
+    if (pGl.gpuInclusive) {
+      gl.finish();
+    }
+  }
+
+  // =========================================================================
   // Benchmark harness
   // =========================================================================
 
@@ -566,7 +976,7 @@
   const WINDOW_MS = 5000;
 
   function runWindow(renderFn, video, grid, perm) {
-    return new Promise(function (resolve) {
+    return new Promise(function (resolve, reject) {
       let frameIndex = 0;
       const samples = [];
       let recordStartTs = null;
@@ -577,9 +987,18 @@
         const wallNow = performance.now();
         if (windowStartWall === null) windowStartWall = wallNow;
 
-        const t0 = performance.now();
-        renderFn(video, grid, perm);
-        const t1 = performance.now();
+        let t0, t1;
+        try {
+          t0 = performance.now();
+          renderFn(video, grid, perm);
+          t1 = performance.now();
+        } catch (err) {
+          // Surface the failure to the caller instead of breaking the whole
+          // page — used by Pipeline C so a WebGL error there never takes
+          // down pipelines A/B. A/B never throw, so this is inert for them.
+          reject(err);
+          return;
+        }
 
         frameIndex++;
         if (frameIndex > WARMUP_FRAMES) {
@@ -635,6 +1054,9 @@
   const statusEl = document.getElementById('status');
   const boxOld = document.getElementById('boxOld');
   const boxNew = document.getElementById('boxNew');
+  const boxGl = document.getElementById('boxGl');
+  const glStatusEl = document.getElementById('glStatus');
+  const gpuInclusiveChk = document.getElementById('gpuInclusiveChk');
   const resultsWrap = document.getElementById('resultsWrap');
   const resultsBody = document.getElementById('resultsBody');
   const verdictsEl = document.getElementById('verdicts');
@@ -647,12 +1069,30 @@
   function setRunning(which) {
     boxOld.classList.toggle('running', which === 'old');
     boxNew.classList.toggle('running', which === 'new');
+    boxGl.classList.toggle('running', which === 'gl');
   }
+
+  function refreshGlStatusUi() {
+    const unavailable = !pGl.available;
+    boxGl.classList.toggle('unavailable', unavailable);
+    glStatusEl.textContent = unavailable ? ('WebGL unavailable: ' + pGl.unavailableReason) : '';
+  }
+  refreshGlStatusUi();
 
   function fmtMs(v) { return isFinite(v) ? v.toFixed(2) + ' ms' : '—'; }
   function fmtFps(v) { return isFinite(v) ? v.toFixed(1) : '—'; }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
 
   let lastResultsText = '';
+
+  function speedupText(fromMean, toMean) {
+    const s = (fromMean && isFinite(fromMean) && toMean && isFinite(toMean)) ? (fromMean / toMean) : NaN;
+    return isFinite(s) ? s.toFixed(1) + '×' : 'n/a';
+  }
 
   async function runBenchmark() {
     startBtn.disabled = true;
@@ -661,11 +1101,13 @@
     resultsBody.innerHTML = '';
     verdictsEl.innerHTML = '';
 
+    pGl.gpuInclusive = !!gpuInclusiveChk.checked;
+
     setStatus('Preparing synthetic video source…', true);
     const video = await setupVideo();
 
     const grids = [9, 3];
-    const allRows = []; // { grid, label, cls, stats }
+    const allRows = []; // { grid, label, cls, stats|null, unavailableMsg }
     const byGrid = {};
 
     for (let gi = 0; gi < grids.length; gi++) {
@@ -674,19 +1116,36 @@
 
       setStatus('Grid ' + grid + ' — running Pipeline A (old)…', true);
       setRunning('old');
-      const rOld = await runWindow(renderOld, video, grid, perm);
-      const sOld = computeStats(rOld);
+      const sOld = computeStats(await runWindow(renderOld, video, grid, perm));
 
-      setStatus('Grid ' + grid + ' — running Pipeline B (new)…', true);
+      setStatus('Grid ' + grid + ' — running Pipeline B (new, 2D)…', true);
       setRunning('new');
-      const rNew = await runWindow(renderNew, video, grid, perm);
-      const sNew = computeStats(rNew);
+      const sNew = computeStats(await runWindow(renderNew, video, grid, perm));
+
+      let sGl = null;
+      let glMessage = '';
+      setStatus('Grid ' + grid + ' — running Pipeline C (new, WebGL)…', true);
+      setRunning('gl');
+      try {
+        sGl = computeStats(await runWindow(renderGl, video, grid, perm));
+      } catch (err) {
+        glMessage = (err && err.message) ? err.message : String(err);
+        console.warn('[perf-bench] Pipeline C window failed for grid ' + grid + ': ' + glMessage);
+      }
+      refreshGlStatusUi();
 
       setRunning(null);
 
-      allRows.push({ grid: grid, label: 'A (old)', cls: 'pipeline-old', stats: sOld });
-      allRows.push({ grid: grid, label: 'B (new)', cls: 'pipeline-new', stats: sNew });
-      byGrid[grid] = { old: sOld, new: sNew };
+      allRows.push({ grid: grid, label: 'A (old)', cls: 'pipeline-old', stats: sOld, unavailableMsg: '' });
+      allRows.push({ grid: grid, label: 'B (new, 2D)', cls: 'pipeline-new', stats: sNew, unavailableMsg: '' });
+      allRows.push({
+        grid: grid,
+        label: 'C (new, WebGL)',
+        cls: 'pipeline-gl',
+        stats: sGl,
+        unavailableMsg: sGl ? '' : (glMessage || pGl.unavailableReason || 'WebGL unavailable'),
+      });
+      byGrid[grid] = { old: sOld, new: sNew, gl: sGl, glMessage: sGl ? '' : (glMessage || pGl.unavailableReason || 'WebGL unavailable') };
     }
 
     // Render table
@@ -694,13 +1153,17 @@
       const row = allRows[i];
       const tr = document.createElement('tr');
       tr.className = row.cls;
-      tr.innerHTML =
-        '<td>' + row.grid + '</td>' +
-        '<td class="pname">' + row.label + '</td>' +
-        '<td>' + row.stats.frames + '</td>' +
-        '<td>' + fmtMs(row.stats.mean) + '</td>' +
-        '<td>' + fmtMs(row.stats.p95) + '</td>' +
-        '<td>' + fmtFps(row.stats.fps) + '</td>';
+      let cells = '<td>' + row.grid + '</td><td class="pname">' + row.label + '</td>';
+      if (row.stats) {
+        cells +=
+          '<td>' + row.stats.frames + '</td>' +
+          '<td>' + fmtMs(row.stats.mean) + '</td>' +
+          '<td>' + fmtMs(row.stats.p95) + '</td>' +
+          '<td>' + fmtFps(row.stats.fps) + '</td>';
+      } else {
+        cells += '<td colspan="4" class="unavailable" title="' + escapeHtml(row.unavailableMsg) + '">unavailable</td>';
+      }
+      tr.innerHTML = cells;
       resultsBody.appendChild(tr);
     }
 
@@ -708,24 +1171,42 @@
     const textLines = [];
     textLines.push('wtv-scramble render pipeline benchmark');
     textLines.push('UA: ' + navigator.userAgent);
+    textLines.push('Pipeline C timing: ' + (pGl.gpuInclusive ? 'GPU-inclusive (gl.finish() forced each frame)' : 'submission-cost only (gl.finish() not called — GPU work is async)'));
     textLines.push('');
     grids.forEach(function (grid) {
       const o = byGrid[grid].old;
       const n = byGrid[grid].new;
-      const speedup = (o.mean && isFinite(o.mean) && n.mean) ? (o.mean / n.mean) : NaN;
+      const g = byGrid[grid].gl;
+      const abText = speedupText(o.mean, n.mean);
+
+      let cText, cLine;
+      if (g) {
+        const acText = speedupText(o.mean, g.mean);
+        const bcText = speedupText(n.mean, g.mean);
+        cText = 'Pipeline C is ' + acText + ' faster than A and ' + bcText + ' faster than B ' +
+          '(mean ' + fmtMs(g.mean) + ', ' + fmtFps(g.fps) + ' fps, p95 ' + fmtMs(g.p95) + ')' +
+          (pGl.gpuInclusive
+            ? ', GPU-inclusive (gl.finish() forced).'
+            : ' — submission cost only; GPU work is async, so enable the gl.finish() toggle above to measure true GPU-inclusive cost.');
+        cLine = '  C (WebGL): mean=' + fmtMs(g.mean) + ' p95=' + fmtMs(g.p95) + ' fps=' + fmtFps(g.fps) + ' frames=' + g.frames;
+      } else {
+        cText = 'Pipeline C (WebGL) was unavailable this run: ' + byGrid[grid].glMessage + '.';
+        cLine = '  C (WebGL): unavailable (' + byGrid[grid].glMessage + ')';
+      }
+
       const div = document.createElement('div');
-      const speedupText = isFinite(speedup) ? speedup.toFixed(1) + '× faster' : 'n/a';
       div.className = 'verdict';
       div.innerHTML =
-        '<b>Grid ' + grid + ':</b> Pipeline B is <b class="speedup">' + speedupText +
-        '</b> per frame (mean ' + fmtMs(n.mean) + ' vs ' + fmtMs(o.mean) + '), achieving ' +
-        fmtFps(n.fps) + ' fps vs ' + fmtFps(o.fps) + ' fps (p95 ' + fmtMs(n.p95) + ' vs ' + fmtMs(o.p95) + ').';
+        '<b>Grid ' + grid + ':</b> Pipeline B is <b class="speedup">' + abText + ' faster</b> than A per frame ' +
+        '(mean ' + fmtMs(n.mean) + ' vs ' + fmtMs(o.mean) + '), achieving ' + fmtFps(n.fps) + ' fps vs ' + fmtFps(o.fps) + ' fps. ' +
+        cText;
       verdictsEl.appendChild(div);
 
       textLines.push('Grid ' + grid + ':');
       textLines.push('  A (old): mean=' + fmtMs(o.mean) + ' p95=' + fmtMs(o.p95) + ' fps=' + fmtFps(o.fps) + ' frames=' + o.frames);
-      textLines.push('  B (new): mean=' + fmtMs(n.mean) + ' p95=' + fmtMs(n.p95) + ' fps=' + fmtFps(n.fps) + ' frames=' + n.frames);
-      textLines.push('  verdict: B is ' + speedupText + ' per frame');
+      textLines.push('  B (new, 2D): mean=' + fmtMs(n.mean) + ' p95=' + fmtMs(n.p95) + ' fps=' + fmtFps(n.fps) + ' frames=' + n.frames);
+      textLines.push(cLine);
+      textLines.push('  verdict: B is ' + abText + ' faster than A per frame; ' + cText);
       textLines.push('');
     });
     lastResultsText = textLines.join('\n');

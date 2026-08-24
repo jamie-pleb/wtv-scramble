@@ -134,6 +134,21 @@ controls, a reset-to-default-key button, and a read-only display of the current 
 Master String. Most people never need to open it — the Master String field on its own is
 enough — but it's there if you want to hand-tune one field at a time.
 
+A few more controls live in this section as of v1.3.0:
+
+- **Renderer** — a dropdown: **Auto** (default), **WebGL**, or **2D**. Auto starts on the
+  standard (2D) renderer and switches to GPU (WebGL) rendering automatically if your machine
+  starts struggling to keep up — most people never need to touch this. Force **WebGL** or
+  **2D** only when you're diagnosing a performance problem and want to pin down whether the GPU
+  path actually helps on your machine. Changing it takes effect immediately.
+- **Performance mode** — caps the render resolution and lets the descrambler skip frames under
+  load instead of falling behind. Turn this on for weaker machines, or any time the video is
+  stuttering and updating the script alone doesn't fix it.
+- **Debug stats** — a small on-screen overlay showing the active renderer (`webgl` or `2d`),
+  whether it's on Auto/forced and whether Auto has escalated, and live frame timings. It's off
+  by default and adds no overhead while off. Turn it on before reporting a performance problem,
+  and include what it shows in your report.
+
 ---
 
 ## The master string, in one line
@@ -165,10 +180,22 @@ its file picker.
   Get the whole `dist` folder again rather than just the script.
 - **Installer says it can't copy the files** — OBS is probably running and has the plugin DLL
   locked. Fully close OBS (check the system tray too) and run the installer again.
-- **Viewer gets choppy video / audio skips with Block Permute on** — update the userscript
-  (v1.2.1 fixed a severe Firefox-specific slowdown at higher grid sizes). Still laggy?
-  Double-click `perf-bench.html` — it measures the descrambler's per-frame cost in your exact
-  browser and prints the numbers, which is exactly what to share when reporting the problem.
+- **Viewer gets choppy video / audio skips with Block Permute on** — as of v1.3.0 the
+  descrambler defaults to a standard 2D canvas renderer (**Renderer: Auto**) and automatically
+  escalates to GPU (WebGL) rendering if it detects sustained overload on your machine. If it's
+  still choppy:
+  1. Update the userscript to the latest version.
+  2. Open the Advanced section and turn on **Debug stats**. The overlay's `renderer:` line
+     shows which renderer is active (`webgl` or `2d`), whether **Renderer** is set to Auto or
+     forced, and — on Auto — whether it has already escalated to WebGL this session.
+  3. On Firefox, also check `about:support` → **Graphics** → **Compositing**. If it says
+     `WebRender (Software)`, Firefox itself isn't using your GPU for compositing (a
+     driver/settings issue on that machine, outside this script's control) — **Performance
+     mode** (below) is the best mitigation available from inside the script in that case.
+  4. Try turning on **Performance mode** (caps render resolution, skips frames under load), or
+     force **Renderer: WebGL** / **Renderer: 2D** to compare the two directly.
+  5. Double-click `perf-bench.html` — it compares the 2D and WebGL pipelines and prints the
+     numbers for your exact browser. Share those numbers when reporting the problem.
 - **Viewer sees a red banner instead of scrambled or clear video** — the key's contract
   `version` doesn't match what the script expects. Double-check the Master String you were
   given rather than hand-editing it.

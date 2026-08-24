@@ -35,8 +35,10 @@ step-by-step instructions live in **[`dist/README.md`](dist/README.md)**; the gi
 
 The OBS filter derives a seeded pseudo-random tile permutation from a shared `seed`, then
 applies it to the frame along with an optional color invert and horizontal/vertical flip. The
-browser userscript undoes the exact same operations in reverse. Because both sides derive
-identical math from one shared seed, the entire shared secret boils down to a single short
+browser userscript undoes the exact same operations in reverse, using a standard canvas renderer
+by default and escalating to GPU (WebGL) rendering automatically if it detects sustained overload
+on the viewer's machine, with a manual override to force either renderer. Because both sides
+derive identical math from one shared seed, the entire shared secret boils down to a single short
 copy-pasteable code — the **Master String** (e.g. `WTV1-1337-9-HIP`) — rather than six separate
 fields two people have to keep in sync by hand.
 
