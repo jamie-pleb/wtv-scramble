@@ -1,5 +1,13 @@
 # w.tv Descramble
 
+[![Install viewer script from Greasy Fork](https://img.shields.io/badge/Viewer%20script-Install%20from%20Greasy%20Fork-670000?style=for-the-badge)](https://greasyfork.org/en/scripts/592720-w-tv-descrambler)
+
+**Just here to watch a scrambled stream?** Install the viewer script in one click:
+**[greasyfork.org/scripts/592720-w-tv-descrambler](https://greasyfork.org/en/scripts/592720-w-tv-descrambler)**
+(needs a userscript manager first — [Tampermonkey](https://www.tampermonkey.net/) if you don't
+have one). It auto-updates from there. Everything below is for streamers setting up the OBS
+side, or anyone who wants the technical details.
+
 A scrambled-broadcast + decoder pair for a streamer's **own** [w.tv](https://w.tv) stream —
 the software equivalent of the old analog scrambled-cable channels that needed a decoder box.
 An OBS filter mangles the streamer's own outgoing video (tile-shuffle, color invert, flip);
@@ -18,8 +26,10 @@ step-by-step instructions live in **[`dist/README.md`](dist/README.md)**; the gi
 
 - **Streamer:** run `dist/install.bat`, add the Scramble filter to your scene, set a key, copy
   the **Master String** it shows you (e.g. `WTV1-1337-9-HIP`).
-- **Viewer:** install `dist/viewer/wtv-descramble.user.js` via Tampermonkey, open the panel on
-  the streamer's channel, and paste the Master String they gave you.
+- **Viewer:** install the script from
+  [Greasy Fork](https://greasyfork.org/en/scripts/592720-w-tv-descrambler) (or
+  `dist/viewer/wtv-descramble.user.js` manually via Tampermonkey), open the panel on the
+  streamer's channel, and paste the Master String they gave you.
 
 ## How it works
 
