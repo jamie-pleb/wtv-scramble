@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         w.tv Descrambler
 // @namespace    https://github.com/jamie-pleb/wtv-scramble
-// @version      1.2.0
+// @version      1.2.1
 // @description  Descrambles a live w.tv video stream in real time, undoing the matching OBS "scramble" filter using a shared key.
 // @author       jamie-pleb
 // @match        https://w.tv/*
@@ -166,8 +166,11 @@
 
   // Per-tile destination/source rects depend on (grid, width, height); cache
   // them so the render loop doesn't recompute 81 rects (or reallocate
-  // arrays) every single frame.
-  let geometryCache = null; // { grid, width, height, tileW, tileH, rects }
+  // arrays) every single frame. Also caches the two unpermuted border-strip
+  // rects (contract.md "Tile geometry") since they depend on the same
+  // (grid, width, height) triple and are otherwise cheap-but-repeated
+  // per-frame arithmetic.
+  let geometryCache = null; // { grid, width, height, tileW, tileH, rects, gridW, gridH, borderRightW, borderBottomH }
   function getGeometry(grid, width, height) {
     if (
       geometryCache &&
@@ -181,7 +184,26 @@
     const n = grid * grid;
     const rects = new Array(n);
     for (let i = 0; i < n; i++) rects[i] = tileRect(i, grid, tileW, tileH);
-    geometryCache = { grid, width, height, tileW, tileH, rects };
+    // gridW/gridH = the permuted region's extent; border strips fill the
+    // L-shaped remainder outside it (each strictly < grid px, per
+    // contract.md), always strictly < grid px so at most one is ever needed
+    // per axis. Right strip runs the FULL height (including the
+    // bottom-right corner); bottom strip only spans the grid width, so the
+    // two strips cover the remainder exactly once each, no overlap/gap.
+    const gridW = tileW * grid;
+    const gridH = tileH * grid;
+    geometryCache = {
+      grid,
+      width,
+      height,
+      tileW,
+      tileH,
+      rects,
+      gridW,
+      gridH,
+      borderRightW: width - gridW,
+      borderBottomH: height - gridH,
+    };
     return geometryCache;
   }
 
@@ -309,8 +331,8 @@
     mode: null, // 'css' (no canvas, cheapest) or 'canvas' (block-permute or bad key version)
     canvas: null,
     ctx: null,
-    workCanvas: null, // offscreen scratch canvas, only used when blockPermute is on
-    workCtx: null,
+    frameCanvas: null, // offscreen scratch canvas holding the ONE per-frame
+    frameCtx: null,    // video snapshot, used when blockPermute is on (see renderFrame)
     frameCallbackId: null,
     frameCallbackKind: null, // 'rvfc' | 'raf' — which API frameCallbackId belongs to
     resizeObserver: null,
@@ -371,8 +393,8 @@
     state.originalParent = null;
     state.originalNextSibling = null;
     state.usingFixedPosition = false;
-    // workCanvas/workCtx deliberately kept — harmless to reuse across videos,
-    // it's just a scratch buffer resized on demand.
+    // frameCanvas/frameCtx deliberately kept — harmless to reuse across
+    // videos, it's just a scratch buffer resized on demand.
   }
 
   // Cheapest possible mode that still honors the current key: skip the
@@ -475,6 +497,14 @@
       if (parent !== video) state.resizeObserver.observe(parent);
     }
 
+    // If the SPA recreated the <video> while the page was ALREADY in
+    // fullscreen, no fullscreenchange event fires (fullscreenElement itself
+    // didn't change), so without this the fresh canvas would sit outside the
+    // fullscreen top layer and never be visible — a blank player until the
+    // user exits and re-enters fullscreen. Outside fullscreen this is a
+    // no-op beyond a harmless extra layout sync.
+    handleFullscreenChange();
+
     startLoop();
   }
 
@@ -563,12 +593,12 @@
     }
   }
 
-  function ensureWorkCanvas(w, h) {
-    if (!state.workCanvas) {
-      state.workCanvas = document.createElement('canvas');
-      state.workCtx = state.workCanvas.getContext('2d', { alpha: false });
+  function ensureFrameCanvas(w, h) {
+    if (!state.frameCanvas) {
+      state.frameCanvas = document.createElement('canvas');
+      state.frameCtx = state.frameCanvas.getContext('2d', { alpha: false });
     }
-    ensureBackingSize(state.workCanvas, w, h);
+    ensureBackingSize(state.frameCanvas, w, h);
   }
 
   function revealOnce() {
@@ -586,19 +616,53 @@
   // Per-frame descramble
   //
   // Pipeline order (see contract.md "Canonical pipeline order"): inverse
-  // block-permute -> invert colors -> flip. Invert and flip no longer cost
-  // any per-frame JavaScript at all: they're applied as CSS filter/transform
+  // block-permute -> invert colors -> flip. Invert and flip cost no
+  // per-frame JavaScript at all: they're applied as CSS filter/transform
   // directly on the canvas element (see applyStaticCss), which the GPU
   // compositor handles independently of the draw loop below. That leaves
   // exactly one job for this function to do per frame: the block-permute
   // tile copy (only when blockPermute is on), which genuinely does need the
   // 2D context because it rearranges pixel *position*, not color.
-  //   1. Permute pass (only when blockPermute is on): draws the raw video
-  //      into an offscreen work canvas, tile-by-tile, sampling scrambled
-  //      slot PERM[i] for output tile i.
-  //   2. Blit pass: copies the permuted result (or the raw video, if
-  //      blockPermute is off) onto the visible canvas untransformed — the
-  //      canvas's own CSS handles invert/flip on top of this.
+  //
+  // ONE-SNAPSHOT PIPELINE, AND WHY IT MATTERS:
+  //
+  // An earlier version of this function used the <video> element directly as
+  // the drawImage SOURCE for every single tile — 1 full-frame base copy + up
+  // to grid*grid tile copies, i.e. 82 video-element reads per frame at the
+  // default grid=9. Chrome decodes/color-converts a video frame once per
+  // task and reuses that cached conversion across repeated
+  // drawImage(video, ...) calls within the same task, so those extra reads
+  // are nearly free there. Firefox does NOT cache this: it re-pays the
+  // video->canvas conversion on every single drawImage(video, ...) call, so
+  // cost scales with grid^2 against the most expensive possible source type.
+  // At grid=9 on real hardware that saturates the main thread badly enough
+  // to visibly tank frame rate and let audio/video sync drift — Chrome saw
+  // none of this.
+  //
+  // Fix: read the <video> element exactly ONCE per frame, into a small
+  // reused offscreen "frame canvas" (state.frameCanvas/state.frameCtx).
+  // Every other draw this frame — the border strips and all grid*grid tile
+  // copies — sources from that already-decoded canvas instead, which is
+  // cheap to re-sample in every browser (canvas-to-canvas drawImage is not
+  // the operation that was expensive). Tiles and strips are also drawn
+  // straight onto the VISIBLE canvas now; there is no second full-frame
+  // "work" canvas and no final full-frame blit stage anymore. Every pixel of
+  // the visible canvas still gets written exactly once per frame — the tile
+  // loop covers the in-grid region, the two border strips cover the
+  // L-shaped remainder — and since a <canvas> only presents its accumulated
+  // draws to the compositor once its owning task finishes (not after each
+  // individual drawImage call), drawing tiles/strips directly onto the
+  // visible canvas cannot tear mid-frame.
+  //   1. Snapshot: frameCtx.drawImage(video, ...) — the ONLY video read.
+  //   2. Border strips (only drawn when the resolution doesn't divide
+  //      evenly by grid): up to two thin unpermuted copies from the
+  //      snapshot straight onto the visible canvas.
+  //   3. Tile pass: grid*grid copies from the snapshot to the visible
+  //      canvas — output tile i <- snapshot tile PERM[i] (see contract.md).
+  // When blockPermute is off, or grid is too fine for this resolution
+  // (tileW/tileH would be 0), there is nothing to rearrange, so a single
+  // ctx.drawImage(video, ...) straight onto the visible canvas is already
+  // both correct and minimal (one read, no snapshot needed).
   // =========================================================================
 
   function renderFrame(video, canvas) {
@@ -609,39 +673,63 @@
     ensureBackingSize(canvas, vw, vh);
 
     const grid = effectiveGrid();
-    let source = video;
 
     if (KEY.blockPermute) {
-      const { tileW, tileH } = tileSize(vw, vh, grid);
-      if (tileW > 0 && tileH > 0) {
-        ensureWorkCanvas(vw, vh);
-        const workCtx = state.workCtx;
+      // getGeometry caches per (grid, vw, vh) — its tileW/tileH replace a
+      // separate tileSize() call here so the steady-state frame path does
+      // zero allocations, per the pipeline note above.
+      const geom = getGeometry(grid, vw, vh);
+      if (geom.tileW > 0 && geom.tileH > 0) {
+        ensureFrameCanvas(vw, vh);
+        const frameCanvas = state.frameCanvas;
+        const frameCtx = state.frameCtx;
+
+        // The ONLY video-element read this frame — see the pipeline note
+        // above for why this must stay singular.
+        frameCtx.drawImage(video, 0, 0, vw, vh);
+
         const { perm } = getPermutation(KEY.seed >>> 0, grid);
-        const geom = getGeometry(grid, vw, vh);
 
-        // Base layer = untouched full frame. This is what supplies the
-        // remainder border (always < grid px on each axis, per
-        // contract.md's tile geometry rules) which block-permute must
-        // leave unpermuted; the loop below only overwrites the in-grid
-        // region on top of it.
-        workCtx.drawImage(video, 0, 0, vw, vh);
+        // Unpermuted remainder border (contract.md "Tile geometry"): a
+        // right strip and a bottom strip, each strictly < grid px, together
+        // covering exactly the L-shaped area the tile loop below does not
+        // touch. Drawn from the snapshot, straight onto the visible canvas;
+        // skipped entirely when the resolution divides evenly by grid.
+        if (geom.borderRightW > 0) {
+          ctx.drawImage(
+            frameCanvas,
+            geom.gridW, 0, geom.borderRightW, vh,
+            geom.gridW, 0, geom.borderRightW, vh
+          );
+        }
+        if (geom.borderBottomH > 0) {
+          ctx.drawImage(
+            frameCanvas,
+            0, geom.gridH, geom.gridW, geom.borderBottomH,
+            0, geom.gridH, geom.gridW, geom.borderBottomH
+          );
+        }
 
-        // Descramble direction: output tile i <- scrambled slot perm[i].
+        // Descramble direction: output tile i <- snapshot tile perm[i].
         // (NOT inv — see the big warning above / SPEC/contract.md.)
         for (let i = 0; i < geom.rects.length; i++) {
           const dest = geom.rects[i];
           const src = geom.rects[perm[i]];
-          workCtx.drawImage(video, src.x, src.y, src.w, src.h, dest.x, dest.y, dest.w, dest.h);
+          ctx.drawImage(frameCanvas, src.x, src.y, src.w, src.h, dest.x, dest.y, dest.w, dest.h);
         }
 
-        source = state.workCanvas;
+        revealOnce();
+        return;
       }
       // else: grid finer than the video resolution allows (tileW/tileH would
       // be 0) — skip permutation rather than issuing zero-size drawImage
-      // calls, which throw. Falls back to drawing the raw frame.
+      // calls, which throw. Falls through to the single-read raw draw below.
     }
 
-    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    // blockPermute off, or the tileW/tileH === 0 fallback above: nothing to
+    // rearrange, so one direct video read straight onto the visible canvas
+    // is already correct and minimal.
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     revealOnce();
   }
 

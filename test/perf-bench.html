@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wtv-scramble render pipeline benchmark</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161d2e;
+    --panel-2: #1d2740;
+    --border: #2b3654;
+    --text: #e6ebfa;
+    --muted: #93a0c2;
+    --accent: #5eb0ff;
+    --good: #4ade80;
+    --bad: #f87171;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+  body {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin: 0 0 4px;
+  }
+  h2 {
+    font-size: 1.05rem;
+    margin: 0 0 10px;
+    color: var(--accent);
+  }
+  .subtitle {
+    color: var(--muted);
+    margin: 0 0 24px;
+    font-size: 0.95rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 18px;
+  }
+  .card p { line-height: 1.55; color: var(--text); font-size: 0.92rem; }
+  .card p.muted, li.muted { color: var(--muted); }
+  code {
+    font-family: var(--mono);
+    background: var(--panel-2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.87em;
+  }
+  ul { margin: 8px 0; padding-left: 22px; line-height: 1.6; font-size: 0.92rem; }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    background: var(--accent);
+    color: #06121f;
+    border: none;
+    border-radius: 7px;
+    padding: 10px 20px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    font-weight: 500;
+    padding: 8px 14px;
+  }
+  #status {
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    color: var(--muted);
+    min-height: 1.4em;
+  }
+  #status.active { color: var(--accent); }
+  .canvas-row {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+  }
+  .canvas-box {
+    flex: 1 1 260px;
+    min-width: 220px;
+  }
+  .canvas-box .label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .canvas-box .label .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--border);
+    transition: background 0.15s;
+  }
+  .canvas-box.running .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .canvas-box canvas {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    display: block;
+    background: #000;
+    border-radius: 8px;
+    border: 2px solid var(--border);
+    transition: border-color 0.15s;
+  }
+  .canvas-box.running canvas { border-color: var(--accent); }
+  .canvas-box .caption {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 5px;
+    line-height: 1.4;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin-top: 4px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-family: var(--sans);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  tr.pipeline-old td.pname { color: #ffb454; }
+  tr.pipeline-new td.pname { color: var(--good); }
+  .verdict {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9rem;
+    line-height: 1.7;
+  }
+  .verdict b.speedup { color: var(--good); }
+  #resultsWrap { display: none; }
+  .table-scroll { overflow-x: auto; }
+  footer {
+    margin-top: 30px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin: 2px 4px 2px 0;
+  }
+</style>
+</head>
+<body>
+
+  <h1>wtv-scramble &mdash; render pipeline benchmark</h1>
+  <p class="subtitle">
+    Standalone A/B benchmark of the Block&nbsp;Permute render path: the shipped v1.2.0
+    pipeline (<b>Pipeline&nbsp;A</b>, many <code>&lt;video&gt;</code> reads per frame) vs. the
+    fixed pipeline (<b>Pipeline&nbsp;B</b>, exactly one <code>&lt;video&gt;</code> read per frame).
+    Runs entirely in this tab &mdash; no server, no network, nothing to install.
+  </p>
+
+  <div class="card">
+    <h2>What this proves</h2>
+    <p>
+      Firefox re-pays the video&rarr;canvas colorspace/decode conversion on <em>every</em>
+      <code>drawImage(video, &hellip;)</code> call, while Chrome converts the decoded frame
+      once and reuses it for the rest of that task. The shipped renderer draws straight from
+      the <code>&lt;video&gt;</code> element 1&nbsp;(base layer) + grid&sup2; (tiles) times per
+      frame &mdash; 82 reads at grid&nbsp;9 &mdash; so its cost scales with grid&sup2; against the
+      most expensive possible source. The fix snapshots the video into an offscreen canvas
+      <b>once</b> per frame, then sources every tile from that canvas instead.
+    </p>
+    <ul>
+      <li><b>Pipeline A (old, v1.2.0 structure):</b> 1&times; <code>drawImage(video)</code>
+        full-frame base layer into an intermediate canvas, + grid&sup2;&times;
+        <code>drawImage(video, tile&hellip;)</code> into that same canvas, + 1&times; final
+        blit of that canvas onto the visible canvas.</li>
+      <li><b>Pipeline B (new, fixed):</b> 1&times; <code>drawImage(video)</code> into a reused
+        offscreen snapshot canvas, + up to 2&times; border-strip copies <em>from the
+        snapshot</em>, + grid&sup2;&times; tile copies <em>from the snapshot</em> straight onto
+        the visible canvas. Zero further video-element reads that frame.</li>
+    </ul>
+    <p class="muted">
+      Both pipelines use the identical permutation, identical tile rects, and the identical
+      synthetic source frame stream &mdash; the <em>only</em> variable under test is whether
+      tiles are sourced from the <code>&lt;video&gt;</code> element or from a pre-snapshotted
+      <code>&lt;canvas&gt;</code>.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Run it</h2>
+    <p class="muted" style="margin-top:-4px;">
+      Synthesizes its own animated video locally (canvas &rarr;
+      <code>captureStream(30)</code>) &mdash; nothing is downloaded and nothing leaves this
+      tab. Tests grid&nbsp;9 then grid&nbsp;3, each pipeline timed for 5 seconds, first 10
+      frames of every window discarded as warmup. Takes about 20 seconds total.
+    </p>
+    <div class="controls">
+      <button id="startBtn">Start benchmark</button>
+      <button id="copyBtn" class="secondary" style="display:none;">Copy results as text</button>
+      <span id="status"></span>
+    </div>
+
+    <div class="canvas-row">
+      <div class="canvas-box" id="boxOld">
+        <div class="label"><span class="dot"></span> Pipeline A &mdash; old (video-sourced tiles)</div>
+        <canvas id="canvasOld" width="1280" height="720"></canvas>
+        <div class="caption">Intermediate work canvas, full-frame base + tiles, then blitted to this visible canvas.</div>
+      </div>
+      <div class="canvas-box" id="boxNew">
+        <div class="label"><span class="dot"></span> Pipeline B &mdash; new (canvas-sourced tiles)</div>
+        <canvas id="canvasNew" width="1280" height="720"></canvas>
+        <div class="caption">One video snapshot per frame; border strips + tiles drawn straight onto this visible canvas.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="resultsWrap">
+    <h2>Results</h2>
+    <div class="table-scroll">
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th>Grid</th>
+            <th>Pipeline</th>
+            <th>Frames</th>
+            <th>Mean render</th>
+            <th>p95 render</th>
+            <th>Achieved fps</th>
+          </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+    <div id="verdicts"></div>
+  </div>
+
+  <footer>
+    <span class="badge">no &lt;script type="module"&gt;</span>
+    <span class="badge">no fetch / XHR / WebSocket</span>
+    <span class="badge">no CDN or remote assets</span>
+    <span class="badge">file:// safe</span>
+    <br>
+    Everything on this page &mdash; math, video synthesis, both render pipelines, timing &mdash;
+    is inlined in one file. View source to verify.
+  </footer>
+
+<script>
+(function () {
+  'use strict';
+
+  // =========================================================================
+  // Ported VERBATIM from SPEC/reference.mjs (the canonical scramble/
+  // descramble reference implementation). Do not "simplify" or re-derive —
+  // see SPEC/contract.md, "Which array does which renderer use?" before
+  // touching any of this. buildPermutation(1337, 9) must match
+  // test/perm-1337-9.json byte-for-byte; that is checked by
+  // test/roundtrip.mjs, not by this file.
+  // =========================================================================
+
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= (t + Math.imul(t ^ (t >>> 7), t | 61)) >>> 0;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // perm[i] = the scrambled slot that source tile i is placed into.
+  function buildPermutation(seed, grid) {
+    const n = grid * grid;
+    const rng = mulberry32(seed);
+    const perm = new Array(n);
+    for (let i = 0; i < n; i++) perm[i] = i;
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = perm[i];
+      perm[i] = perm[j];
+      perm[j] = tmp;
+    }
+    return perm;
+  }
+
+  // inv[perm[i]] = i. Computed for parity with reference.mjs / contract.md;
+  // NOT used by the browser descrambler direction (that uses perm directly
+  // — see below), only by the OBS scramble shader on the other side of the
+  // contract. Kept here so this file is a faithful, complete inline of the
+  // reference math rather than a trimmed-down subset.
+  function invertPermutation(perm) {
+    const inv = new Array(perm.length);
+    for (let i = 0; i < perm.length; i++) inv[perm[i]] = i;
+    return inv;
+  }
+
+  function tileSize(width, height, grid) {
+    return { tileW: Math.floor(width / grid), tileH: Math.floor(height / grid) };
+  }
+
+  function tileRect(index, grid, tileW, tileH) {
+    const col = index % grid;
+    const row = Math.floor(index / grid);
+    return { x: col * tileW, y: row * tileH, w: tileW, h: tileH };
+  }
+
+  // Browser descrambler direction (contract.md "Which array does which
+  // renderer use?"): for OUTPUT tile i (true position), sample the
+  // SCRAMBLED frame at slot PERM[i]. NOT inv — getting this backwards does
+  // not crash, it silently renders a differently-scrambled picture.
+  const SEED = 1337; // SPEC/contract.md DEFAULT_KEY.seed — arbitrary for a perf test, kept for fidelity.
+
+  let geometryCache = null; // { grid, width, height, tileW, tileH, rects }
+  function getGeometry(grid, width, height) {
+    if (
+      geometryCache &&
+      geometryCache.grid === grid &&
+      geometryCache.width === width &&
+      geometryCache.height === height
+    ) {
+      return geometryCache;
+    }
+    const { tileW, tileH } = tileSize(width, height, grid);
+    const n = grid * grid;
+    const rects = new Array(n);
+    for (let i = 0; i < n; i++) rects[i] = tileRect(i, grid, tileW, tileH);
+    geometryCache = { grid, width, height, tileW, tileH, rects };
+    return geometryCache;
+  }
+
+  function ensureBackingSize(cv, w, h) {
+    if (cv.width !== w || cv.height !== h) {
+      cv.width = w;
+      cv.height = h;
+    }
+  }
+
+  // =========================================================================
+  // Synthetic video source — animated moving gradient + shapes + frame
+  // counter, drawn on a canvas and captured via captureStream(30). No
+  // network, no files: a real playing <video> element with real per-frame
+  // decode/compositing cost, sourced from nothing but local canvas draws.
+  // =========================================================================
+
+  const SRC_W = 1280;
+  const SRC_H = 720;
+
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = SRC_W;
+  sourceCanvas.height = SRC_H;
+  const sourceCtx = sourceCanvas.getContext('2d');
+
+  let srcFrameCount = 0;
+  function drawSourceFrame(ts) {
+    srcFrameCount++;
+    const t = ts / 1000;
+
+    const hue1 = (t * 40) % 360;
+    const hue2 = (hue1 + 120) % 360;
+    const grad = sourceCtx.createLinearGradient(0, 0, SRC_W, SRC_H);
+    grad.addColorStop(0, 'hsl(' + hue1.toFixed(1) + ',70%,45%)');
+    grad.addColorStop(1, 'hsl(' + hue2.toFixed(1) + ',70%,22%)');
+    sourceCtx.fillStyle = grad;
+    sourceCtx.fillRect(0, 0, SRC_W, SRC_H);
+
+    for (let i = 0; i < 7; i++) {
+      const angle = t * 0.6 + (i * Math.PI * 2) / 7;
+      const cx = SRC_W / 2 + Math.cos(angle) * (SRC_W * 0.32);
+      const cy = SRC_H / 2 + Math.sin(angle * 1.3) * (SRC_H * 0.32);
+      const r = 38 + 22 * Math.sin(t * 2 + i);
+      sourceCtx.beginPath();
+      sourceCtx.arc(cx, cy, Math.max(4, r), 0, Math.PI * 2);
+      sourceCtx.fillStyle = 'hsla(' + ((hue2 + i * 37) % 360).toFixed(1) + ',85%,60%,0.88)';
+      sourceCtx.fill();
+    }
+
+    sourceCtx.fillStyle = 'rgba(0,0,0,0.55)';
+    sourceCtx.fillRect(0, 0, 230, 46);
+    sourceCtx.fillStyle = '#ffffff';
+    sourceCtx.font = '24px monospace';
+    sourceCtx.textBaseline = 'top';
+    sourceCtx.fillText('frame ' + srcFrameCount, 10, 10);
+
+    requestAnimationFrame(drawSourceFrame);
+  }
+  requestAnimationFrame(drawSourceFrame);
+
+  let videoEl = null;
+  let activeStream = null;
+
+  async function setupVideo() {
+    if (videoEl) {
+      videoEl.pause();
+      if (activeStream) activeStream.getTracks().forEach(function (tr) { tr.stop(); });
+      if (videoEl.parentNode) videoEl.parentNode.removeChild(videoEl);
+    }
+    activeStream = sourceCanvas.captureStream(30);
+    videoEl = document.createElement('video');
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    videoEl.width = 2;
+    videoEl.height = 2;
+    videoEl.style.position = 'fixed';
+    videoEl.style.left = '-9999px';
+    videoEl.style.width = '2px';
+    videoEl.style.height = '2px';
+    document.body.appendChild(videoEl);
+    videoEl.srcObject = activeStream;
+    await videoEl.play();
+    await new Promise(function (resolve) {
+      (function check() {
+        if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) { resolve(); return; }
+        requestAnimationFrame(check);
+      })();
+    });
+    return videoEl;
+  }
+
+  // =========================================================================
+  // Pipeline A — old / shipped v1.2.0 structure: base layer + tiles drawn
+  // from the <video> element into an intermediate work canvas, then one
+  // full-frame blit of that canvas onto the visible canvas.
+  // =========================================================================
+
+  const pOld = {
+    canvas: document.getElementById('canvasOld'),
+    ctx: null,
+    work: document.createElement('canvas'),
+    workCtx: null,
+  };
+  pOld.ctx = pOld.canvas.getContext('2d', { alpha: false });
+  pOld.workCtx = pOld.work.getContext('2d', { alpha: false });
+
+  function renderOld(video, grid, perm) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    ensureBackingSize(pOld.canvas, vw, vh);
+    ensureBackingSize(pOld.work, vw, vh);
+
+    // Base layer: untouched full frame (supplies the remainder border).
+    pOld.workCtx.drawImage(video, 0, 0, vw, vh);
+
+    // Descramble direction: output tile i <- scrambled slot perm[i].
+    const geom = getGeometry(grid, vw, vh);
+    for (let i = 0; i < geom.rects.length; i++) {
+      const dest = geom.rects[i];
+      const src = geom.rects[perm[i]];
+      pOld.workCtx.drawImage(video, src.x, src.y, src.w, src.h, dest.x, dest.y, dest.w, dest.h);
+    }
+
+    // Final blit onto the visible canvas.
+    pOld.ctx.drawImage(pOld.work, 0, 0, pOld.canvas.width, pOld.canvas.height);
+  }
+
+  // =========================================================================
+  // Pipeline B — fixed: exactly ONE video-element read per frame, into a
+  // reused offscreen "frame canvas". Everything else (border strips + all
+  // grid*grid tiles) is drawn from that canvas directly onto the visible
+  // canvas — no intermediate work canvas, no second full-frame blit.
+  // =========================================================================
+
+  const pNew = {
+    canvas: document.getElementById('canvasNew'),
+    ctx: null,
+    frame: document.createElement('canvas'),
+    frameCtx: null,
+  };
+  pNew.ctx = pNew.canvas.getContext('2d', { alpha: false });
+  pNew.frameCtx = pNew.frame.getContext('2d', { alpha: false });
+
+  function renderNew(video, grid, perm) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    ensureBackingSize(pNew.canvas, vw, vh);
+    ensureBackingSize(pNew.frame, vw, vh);
+
+    // The ONE video-element read for this frame.
+    pNew.frameCtx.drawImage(video, 0, 0, vw, vh);
+
+    const geom = getGeometry(grid, vw, vh);
+    const tileW = geom.tileW;
+    const tileH = geom.tileH;
+    const usedW = tileW * grid;
+    const usedH = tileH * grid;
+    const rightW = vw - usedW;
+    const bottomH = vh - usedH;
+
+    // Remainder border (always < grid px per axis): two thin strips, each
+    // drawn straight from the snapshot. Skipped entirely when the
+    // resolution divides evenly (both are 0 at 1280x720 for grid 3/9 on
+    // the height axis; a nonzero right strip is the common case).
+    if (rightW > 0) {
+      pNew.ctx.drawImage(pNew.frame, usedW, 0, rightW, vh, usedW, 0, rightW, vh);
+    }
+    if (bottomH > 0) {
+      pNew.ctx.drawImage(pNew.frame, 0, usedH, usedW, bottomH, 0, usedH, usedW, bottomH);
+    }
+
+    // Descramble direction: output tile i <- scrambled slot perm[i]. Tiles
+    // go straight onto the visible canvas, sourced from the snapshot —
+    // never from the <video> element.
+    for (let i = 0; i < geom.rects.length; i++) {
+      const dest = geom.rects[i];
+      const src = geom.rects[perm[i]];
+      pNew.ctx.drawImage(pNew.frame, src.x, src.y, src.w, src.h, dest.x, dest.y, dest.w, dest.h);
+    }
+  }
+
+  // =========================================================================
+  // Benchmark harness
+  // =========================================================================
+
+  function scheduleFrame(video, cb) {
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      video.requestVideoFrameCallback(cb);
+    } else {
+      requestAnimationFrame(cb);
+    }
+  }
+
+  const WARMUP_FRAMES = 10;
+  const WINDOW_MS = 5000;
+
+  function runWindow(renderFn, video, grid, perm) {
+    return new Promise(function (resolve) {
+      let frameIndex = 0;
+      const samples = [];
+      let recordStartTs = null;
+      let recordLastTs = null;
+      let windowStartWall = null;
+
+      function tick() {
+        const wallNow = performance.now();
+        if (windowStartWall === null) windowStartWall = wallNow;
+
+        const t0 = performance.now();
+        renderFn(video, grid, perm);
+        const t1 = performance.now();
+
+        frameIndex++;
+        if (frameIndex > WARMUP_FRAMES) {
+          samples.push(t1 - t0);
+          if (recordStartTs === null) recordStartTs = t1;
+          recordLastTs = t1;
+        }
+
+        if (performance.now() - windowStartWall >= WINDOW_MS) {
+          resolve({
+            frames: samples.length,
+            samples: samples,
+            elapsedRecordedMs: (recordStartTs !== null && samples.length > 1) ? (recordLastTs - recordStartTs) : null,
+          });
+        } else {
+          scheduleFrame(video, tick);
+        }
+      }
+
+      scheduleFrame(video, tick);
+    });
+  }
+
+  function computeStats(result) {
+    const frames = result.frames;
+    if (frames === 0) {
+      return { frames: 0, mean: NaN, p95: NaN, fps: NaN };
+    }
+    const samples = result.samples;
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) sum += samples[i];
+    const mean = sum / frames;
+
+    const sorted = samples.slice().sort(function (a, b) { return a - b; });
+    const p95idx = Math.min(sorted.length - 1, Math.floor(0.95 * sorted.length));
+    const p95 = sorted[p95idx];
+
+    let fps;
+    if (result.elapsedRecordedMs && result.elapsedRecordedMs > 0 && frames > 1) {
+      fps = (frames - 1) / (result.elapsedRecordedMs / 1000);
+    } else {
+      fps = 1000 / mean;
+    }
+    return { frames: frames, mean: mean, p95: p95, fps: fps };
+  }
+
+  // =========================================================================
+  // UI wiring
+  // =========================================================================
+
+  const startBtn = document.getElementById('startBtn');
+  const copyBtn = document.getElementById('copyBtn');
+  const statusEl = document.getElementById('status');
+  const boxOld = document.getElementById('boxOld');
+  const boxNew = document.getElementById('boxNew');
+  const resultsWrap = document.getElementById('resultsWrap');
+  const resultsBody = document.getElementById('resultsBody');
+  const verdictsEl = document.getElementById('verdicts');
+
+  function setStatus(text, active) {
+    statusEl.textContent = text;
+    statusEl.className = active ? 'active' : '';
+  }
+
+  function setRunning(which) {
+    boxOld.classList.toggle('running', which === 'old');
+    boxNew.classList.toggle('running', which === 'new');
+  }
+
+  function fmtMs(v) { return isFinite(v) ? v.toFixed(2) + ' ms' : '—'; }
+  function fmtFps(v) { return isFinite(v) ? v.toFixed(1) : '—'; }
+
+  let lastResultsText = '';
+
+  async function runBenchmark() {
+    startBtn.disabled = true;
+    copyBtn.style.display = 'none';
+    resultsWrap.style.display = 'none';
+    resultsBody.innerHTML = '';
+    verdictsEl.innerHTML = '';
+
+    setStatus('Preparing synthetic video source…', true);
+    const video = await setupVideo();
+
+    const grids = [9, 3];
+    const allRows = []; // { grid, label, cls, stats }
+    const byGrid = {};
+
+    for (let gi = 0; gi < grids.length; gi++) {
+      const grid = grids[gi];
+      const perm = buildPermutation(SEED, grid);
+
+      setStatus('Grid ' + grid + ' — running Pipeline A (old)…', true);
+      setRunning('old');
+      const rOld = await runWindow(renderOld, video, grid, perm);
+      const sOld = computeStats(rOld);
+
+      setStatus('Grid ' + grid + ' — running Pipeline B (new)…', true);
+      setRunning('new');
+      const rNew = await runWindow(renderNew, video, grid, perm);
+      const sNew = computeStats(rNew);
+
+      setRunning(null);
+
+      allRows.push({ grid: grid, label: 'A (old)', cls: 'pipeline-old', stats: sOld });
+      allRows.push({ grid: grid, label: 'B (new)', cls: 'pipeline-new', stats: sNew });
+      byGrid[grid] = { old: sOld, new: sNew };
+    }
+
+    // Render table
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
+      const tr = document.createElement('tr');
+      tr.className = row.cls;
+      tr.innerHTML =
+        '<td>' + row.grid + '</td>' +
+        '<td class="pname">' + row.label + '</td>' +
+        '<td>' + row.stats.frames + '</td>' +
+        '<td>' + fmtMs(row.stats.mean) + '</td>' +
+        '<td>' + fmtMs(row.stats.p95) + '</td>' +
+        '<td>' + fmtFps(row.stats.fps) + '</td>';
+      resultsBody.appendChild(tr);
+    }
+
+    // Verdicts
+    const textLines = [];
+    textLines.push('wtv-scramble render pipeline benchmark');
+    textLines.push('UA: ' + navigator.userAgent);
+    textLines.push('');
+    grids.forEach(function (grid) {
+      const o = byGrid[grid].old;
+      const n = byGrid[grid].new;
+      const speedup = (o.mean && isFinite(o.mean) && n.mean) ? (o.mean / n.mean) : NaN;
+      const div = document.createElement('div');
+      const speedupText = isFinite(speedup) ? speedup.toFixed(1) + '× faster' : 'n/a';
+      div.className = 'verdict';
+      div.innerHTML =
+        '<b>Grid ' + grid + ':</b> Pipeline B is <b class="speedup">' + speedupText +
+        '</b> per frame (mean ' + fmtMs(n.mean) + ' vs ' + fmtMs(o.mean) + '), achieving ' +
+        fmtFps(n.fps) + ' fps vs ' + fmtFps(o.fps) + ' fps (p95 ' + fmtMs(n.p95) + ' vs ' + fmtMs(o.p95) + ').';
+      verdictsEl.appendChild(div);
+
+      textLines.push('Grid ' + grid + ':');
+      textLines.push('  A (old): mean=' + fmtMs(o.mean) + ' p95=' + fmtMs(o.p95) + ' fps=' + fmtFps(o.fps) + ' frames=' + o.frames);
+      textLines.push('  B (new): mean=' + fmtMs(n.mean) + ' p95=' + fmtMs(n.p95) + ' fps=' + fmtFps(n.fps) + ' frames=' + n.frames);
+      textLines.push('  verdict: B is ' + speedupText + ' per frame');
+      textLines.push('');
+    });
+    lastResultsText = textLines.join('\n');
+
+    resultsWrap.style.display = 'block';
+    copyBtn.style.display = 'inline-block';
+    setStatus('Benchmark complete.', false);
+    startBtn.disabled = false;
+    startBtn.textContent = 'Run again';
+  }
+
+  startBtn.addEventListener('click', function () {
+    runBenchmark().catch(function (err) {
+      console.error(err);
+      setStatus('Error: ' + (err && err.message ? err.message : String(err)), false);
+      startBtn.disabled = false;
+    });
+  });
+
+  copyBtn.addEventListener('click', function () {
+    if (!lastResultsText) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(lastResultsText).then(function () {
+        const orig = copyBtn.textContent;
+        copyBtn.textContent = 'Copied!';
+        setTimeout(function () { copyBtn.textContent = orig; }, 1200);
+      }).catch(function () {
+        window.prompt('Copy results:', lastResultsText);
+      });
+    } else {
+      window.prompt('Copy results:', lastResultsText);
+    }
+  });
+})();
+</script>
+</body>
+</html>
