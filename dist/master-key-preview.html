@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Master Key Preview — Scramble/Descramble Standalone Verifier</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #2a2f3a;
+    --text: #e6e8ee;
+    --text-dim: #9aa2b1;
+    --accent: #5eb0ff;
+    --good: #34d399;
+    --good-bg: #0d2a20;
+    --bad: #f87171;
+    --bad-bg: #3a1414;
+    --warn: #fbbf24;
+    --warn-bg: #3a2f0d;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  body { padding: 20px 24px 60px; max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--text-dim); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+  p { margin: 4px 0; }
+  a { color: var(--accent); }
+  code, pre, kbd {
+    font-family: var(--mono);
+    background: #0b0d12;
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+  }
+  code { padding: 1px 5px; font-size: 12.5px; }
+  pre { padding: 10px 12px; font-size: 12px; overflow: auto; margin: 0; }
+
+  .subtitle { color: var(--text-dim); margin-bottom: 16px; }
+
+  .banner {
+    background: var(--good-bg);
+    border: 1px solid #14532d;
+    color: #bbf7d0;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 14px 0 18px;
+    font-size: 13px;
+  }
+  .banner code { background: #06170e; border-color: #14532d; color: #bbf7d0; }
+
+  section.panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 16px 0;
+  }
+
+  .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label { font-size: 12px; color: var(--text-dim); }
+  .field input[type="text"],
+  .field input[type="number"] {
+    background: #0b0d12;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 5px;
+    padding: 7px 9px;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+  .check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+
+  button {
+    background: #232838;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 5px;
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1c3a5e; border-color: #2f5c8f; color: #d6ebff; }
+  button.primary:hover { background: #224a75; }
+  button:active { transform: translateY(1px); }
+
+  #masterForm { flex: 1 1 420px; }
+  #masterInput { width: 100%; font-size: 14px; padding: 9px 10px; }
+
+  .canonical-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap;
+  }
+  .canonical-row .label { font-size: 12px; color: var(--text-dim); }
+  #canonicalMaster { font-size: 14px; padding: 4px 8px; color: var(--accent); }
+
+  .error-box {
+    display: none;
+    background: var(--bad-bg);
+    border: 1px solid #7f1d1d;
+    color: #fecaca;
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-top: 10px;
+    font-size: 13px;
+    font-family: var(--mono);
+    white-space: pre-wrap;
+  }
+  .error-box.show { display: block; }
+
+  .warn-box {
+    display: none;
+    background: var(--warn-bg);
+    border: 1px solid #92700c;
+    color: #fde68a;
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-top: 10px;
+    font-size: 13px;
+  }
+  .warn-box.show { display: block; }
+
+  details.advanced { margin-top: 14px; }
+  details.advanced > summary {
+    cursor: pointer; font-size: 13px; color: var(--text-dim); font-weight: 600;
+    letter-spacing: 0.02em; text-transform: uppercase; padding: 4px 0;
+  }
+  .advanced-body { padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .checks-row { display: flex; gap: 18px; flex-wrap: wrap; }
+
+  .image-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+
+  .canvases {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-top: 6px;
+  }
+  .canvas-card {
+    background: #0b0d12;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .canvas-card h3 {
+    margin: 0 0 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    font-weight: 700;
+  }
+  .canvas-card canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #000;
+    border-radius: 5px;
+  }
+
+  #verdict {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid var(--panel-border);
+  }
+  #verdict.pass { background: var(--good-bg); border-color: #14532d; color: #bbf7d0; }
+  #verdict.fail { background: var(--bad-bg); border-color: #7f1d1d; color: #fecaca; }
+  #verdict.pending { background: #171a21; color: var(--text-dim); }
+
+  .help p { margin: 6px 0; }
+  .help ul { margin: 6px 0; padding-left: 20px; }
+  .help li { margin: 3px 0; }
+
+  footer { margin-top: 26px; color: var(--text-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Master Key Preview</h1>
+<p class="subtitle">Standalone scramble/descramble key verifier — no server, no build step, no imports.</p>
+
+<div class="banner">
+  This page is fully self-contained: every function below is inlined in a single
+  classic <code>&lt;script&gt;</code> tag (no <code>type="module"</code>, no <code>import</code>, no
+  <code>fetch</code>). Double-click <code>master-key-preview.html</code> from disk and it works exactly the
+  same as it does here — check the address bar, it should read <code>file://…</code>.
+</div>
+
+<section class="panel">
+  <h2>Master string</h2>
+  <div class="row">
+    <form id="masterForm" class="field">
+      <label for="masterInput">Paste or edit a master string, then Apply</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="masterInput" autocomplete="off" spellcheck="false" />
+        <button type="submit" class="primary">Apply</button>
+      </div>
+    </form>
+    <div class="field">
+      <label>&nbsp;</label>
+      <div style="display:flex; gap:8px;">
+        <button type="button" id="resetDefaultBtn">Reset to default key</button>
+      </div>
+    </div>
+  </div>
+  <div id="masterError" class="error-box"></div>
+  <div class="canonical-row">
+    <span class="label">Canonical master string for the current settings:</span>
+    <code id="canonicalMaster"></code>
+  </div>
+
+  <details class="advanced" id="advancedDetails" open>
+    <summary>Advanced — individual fields</summary>
+    <div class="advanced-body">
+      <div class="row">
+        <div class="field">
+          <label for="seedInput">seed (uint32, 0 .. 4294967295)</label>
+          <input type="number" id="seedInput" min="0" max="4294967295" step="1" />
+        </div>
+        <div class="field">
+          <label for="gridInput">grid (N×N tiles, integer ≥ 1)</label>
+          <input type="number" id="gridInput" min="1" step="1" />
+        </div>
+      </div>
+      <div class="checks-row">
+        <label class="check"><input type="checkbox" id="flipHInput" /> flipH (H)</label>
+        <label class="check"><input type="checkbox" id="flipVInput" /> flipV (V)</label>
+        <label class="check"><input type="checkbox" id="invertInput" /> invert (I)</label>
+        <label class="check"><input type="checkbox" id="permuteInput" /> blockPermute (P)</label>
+      </div>
+      <div id="advancedError" class="error-box"></div>
+    </div>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Base image</h2>
+  <div class="image-row">
+    <div class="field">
+      <label for="fileInput">Load your own PNG/JPG</label>
+      <input type="file" id="fileInput" accept="image/png,image/jpeg,image/*" />
+    </div>
+    <button type="button" id="useSyntheticBtn">Use generated synthetic scene</button>
+    <label class="check"><input type="checkbox" id="overlayNumbersInput" checked /> overlay tile-index numbers &amp; grid lines</label>
+  </div>
+  <div id="perfWarning" class="warn-box"></div>
+
+  <div class="canvases">
+    <div class="canvas-card">
+      <h3>Original</h3>
+      <canvas id="canvasOriginal"></canvas>
+    </div>
+    <div class="canvas-card">
+      <h3>Scrambled</h3>
+      <canvas id="canvasScrambled"></canvas>
+    </div>
+    <div class="canvas-card">
+      <h3>Descrambled</h3>
+      <canvas id="canvasDescrambled"></canvas>
+    </div>
+  </div>
+
+  <div id="verdict" class="pending">Computing…</div>
+</section>
+
+<section class="panel help">
+  <h2>What is this</h2>
+  <p><strong>A master string</strong> is the compact, copy-pasteable form of a scramble key, e.g.
+  <code>WTV1-1337-9-HIP</code>: <code>WTV&lt;version&gt;-&lt;seed&gt;-&lt;grid&gt;-&lt;flags&gt;</code>,
+  where <code>flags</code> is any combination of <code>H</code> (flip horizontal), <code>V</code>
+  (flip vertical), <code>I</code> (invert colors), <code>P</code> (block permute) — in that order —
+  or <code>0</code> for none enabled.</p>
+  <p>This page needs no web server and makes no network requests. It reimplements the exact same
+  math used by the OBS plugin and the viewer userscript — <code>mulberry32</code>, the Fisher–Yates
+  permutation builder, tile geometry, flip/invert, and encode/parse for the master string —
+  copied verbatim into a plain script tag so it also runs unmodified from a <code>file://</code> URL.</p>
+  <p>A matching key is exactly what a viewer pastes into the <code>wtv-descramble.user.js</code>
+  userscript's panel: the broadcaster picks a key in OBS, shares the master string with their
+  audience out-of-band, and only viewers with that exact string see an undistorted picture.</p>
+  <ul>
+    <li><strong>Scramble</strong> pipeline order: flip → invert → block-permute (using <code>inv</code>).</li>
+    <li><strong>Descramble</strong> pipeline order (inverse): un-permute (using <code>perm</code>) → invert → flip.</li>
+    <li>The green/red banner below the canvases does an exact pixel compare of <em>Original</em> vs
+    <em>Descrambled</em> — for any valid key this should always be a bit-exact match, since the
+    round trip is guaranteed by the contract.</li>
+  </ul>
+</section>
+
+<footer>
+  master-key-preview.html — standalone verifier, implements the wtv-descramble contract v1 (same math as the OBS plugin and viewer userscript).
+</footer>
+
+<script>
+"use strict";
+// =========================================================================
+// Everything below this point is a verbatim, dependency-free port of
+// SPEC/reference.mjs (only the `export` keywords are removed — classic
+// scripts under file:// cannot use ES module syntax). Do not "improve" the
+// math here; if it ever needs to change, change reference.mjs first, run
+// test/roundtrip.mjs, then re-copy.
+// =========================================================================
+
+var CONTRACT_VERSION = 1;
+
+var DEFAULT_KEY = Object.freeze({
+  seed: 1337,
+  grid: 9,
+  flipH: true,
+  flipV: false,
+  invert: true,
+  blockPermute: true,
+  version: CONTRACT_VERSION,
+});
+
+function validateKey(key) {
+  if (!key || typeof key !== "object") {
+    throw new Error("scramble key must be an object");
+  }
+  if (key.version !== CONTRACT_VERSION) {
+    throw new Error(
+      `scramble key version mismatch: got ${key.version}, this build expects ${CONTRACT_VERSION}. Refusing to run rather than misrender.`
+    );
+  }
+  if (!Number.isInteger(key.grid) || key.grid < 1) {
+    throw new Error(`scramble key.grid must be a positive integer, got ${key.grid}`);
+  }
+  if (!Number.isFinite(key.seed)) {
+    throw new Error(`scramble key.seed must be a finite number, got ${key.seed}`);
+  }
+  return key;
+}
+
+// --- Master string ------------------------------------------------------
+
+function encodeMasterString(key) {
+  validateKey(key);
+  let flags = "";
+  if (key.flipH) flags += "H";
+  if (key.flipV) flags += "V";
+  if (key.invert) flags += "I";
+  if (key.blockPermute) flags += "P";
+  if (flags === "") flags = "0";
+  return `WTV${key.version}-${key.seed >>> 0}-${key.grid}-${flags}`;
+}
+
+function parseMasterString(str) {
+  if (typeof str !== "string") {
+    throw new Error("master string must be a string");
+  }
+  const m = /^WTV(\d+)-(\d+)-(\d+)-([A-Za-z0-9]*)$/i.exec(str.trim());
+  if (!m) {
+    throw new Error(`not a valid master string (expected WTV1-<seed>-<grid>-<flags>): "${str.trim()}"`);
+  }
+  const version = parseInt(m[1], 10);
+  if (version !== CONTRACT_VERSION) {
+    throw new Error(`master string version ${version} unsupported (this build expects ${CONTRACT_VERSION})`);
+  }
+  const seed = Number(m[2]);
+  if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295) {
+    throw new Error(`master string seed out of uint32 range: ${m[2]}`);
+  }
+  const grid = parseInt(m[3], 10);
+  if (!Number.isInteger(grid) || grid < 1) {
+    throw new Error(`master string grid must be >= 1: ${m[3]}`);
+  }
+  const key = { seed, grid, flipH: false, flipV: false, invert: false, blockPermute: false, version };
+  const flagsRaw = m[4].toUpperCase();
+  if (flagsRaw !== "" && flagsRaw !== "0") {
+    for (const ch of flagsRaw) {
+      if (ch === "H") key.flipH = true;
+      else if (ch === "V") key.flipV = true;
+      else if (ch === "I") key.invert = true;
+      else if (ch === "P") key.blockPermute = true;
+      else throw new Error(`unknown flag "${ch}" in master string (valid: H, V, I, P, or 0 for none)`);
+    }
+  }
+  return key;
+}
+
+// --- PRNG -------------------------------------------------------------
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= (t + Math.imul(t ^ (t >>> 7), t | 61)) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// --- Permutation --------------------------------------------------------
+
+// perm[i] = the scrambled slot that source tile i is placed into.
+function buildPermutation(seed, grid) {
+  const n = grid * grid;
+  const rng = mulberry32(seed);
+  const perm = new Array(n);
+  for (let i = 0; i < n; i++) perm[i] = i;
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = perm[i];
+    perm[i] = perm[j];
+    perm[j] = tmp;
+  }
+  return perm;
+}
+
+// inv[perm[i]] = i
+function invertPermutation(perm) {
+  const inv = new Array(perm.length);
+  for (let i = 0; i < perm.length; i++) inv[perm[i]] = i;
+  return inv;
+}
+
+// --- Tile geometry --------------------------------------------------------
+
+function tileSize(width, height, grid) {
+  return { tileW: Math.floor(width / grid), tileH: Math.floor(height / grid) };
+}
+
+function tileRect(index, grid, tileW, tileH) {
+  const col = index % grid;
+  const row = Math.floor(index / grid);
+  return { x: col * tileW, y: row * tileH, w: tileW, h: tileH };
+}
+
+// --- Pixel buffer helpers ---------------------------------------------
+// image: { width, height, data: Uint8ClampedArray of length width*height*4 (RGBA) }
+
+function cloneImage(image) {
+  return { width: image.width, height: image.height, data: Uint8ClampedArray.from(image.data) };
+}
+
+function blankImage(width, height) {
+  return { width, height, data: new Uint8ClampedArray(width * height * 4) };
+}
+
+function copyRect(srcImg, srcRect, dstImg, dstRect) {
+  const sw = srcImg.width;
+  const dw = dstImg.width;
+  const sd = srcImg.data;
+  const dd = dstImg.data;
+  for (let row = 0; row < srcRect.h; row++) {
+    const sy = srcRect.y + row;
+    const dy = dstRect.y + row;
+    const sOff = (sy * sw + srcRect.x) * 4;
+    const dOff = (dy * dw + dstRect.x) * 4;
+    dd.set(sd.subarray(sOff, sOff + srcRect.w * 4), dOff);
+  }
+}
+
+function flipHorizontal(image) {
+  const { width, height, data } = image;
+  const out = new Uint8ClampedArray(data.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const sx = width - 1 - x;
+      const sOff = (y * width + sx) * 4;
+      const dOff = (y * width + x) * 4;
+      out[dOff] = data[sOff];
+      out[dOff + 1] = data[sOff + 1];
+      out[dOff + 2] = data[sOff + 2];
+      out[dOff + 3] = data[sOff + 3];
+    }
+  }
+  return { width, height, data: out };
+}
+
+function flipVertical(image) {
+  const { width, height, data } = image;
+  const out = new Uint8ClampedArray(data.length);
+  const rowBytes = width * 4;
+  for (let y = 0; y < height; y++) {
+    const sy = height - 1 - y;
+    out.set(data.subarray(sy * rowBytes, sy * rowBytes + rowBytes), y * rowBytes);
+  }
+  return { width, height, data: out };
+}
+
+function invertColors(image) {
+  const { width, height, data } = image;
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    out[i] = 255 - data[i];
+    out[i + 1] = 255 - data[i + 1];
+    out[i + 2] = 255 - data[i + 2];
+    out[i + 3] = data[i + 3];
+  }
+  return { width, height, data: out };
+}
+
+// Scramble direction: output slot s <- source tile inv[s]. See contract.md.
+function blockPermuteForward(image, seed, grid) {
+  const perm = buildPermutation(seed, grid);
+  const inv = invertPermutation(perm);
+  const { tileW, tileH } = tileSize(image.width, image.height, grid);
+  const out = cloneImage(image); // remainder border passes through untouched
+  const n = grid * grid;
+  for (let s = 0; s < n; s++) {
+    const destRect = tileRect(s, grid, tileW, tileH);
+    const srcIdx = inv[s];
+    const srcRect = tileRect(srcIdx, grid, tileW, tileH);
+    copyRect(image, srcRect, out, destRect);
+  }
+  return out;
+}
+
+// Descramble direction: output tile i <- scrambled slot perm[i]. See contract.md.
+function blockPermuteInverse(image, seed, grid) {
+  const perm = buildPermutation(seed, grid);
+  const { tileW, tileH } = tileSize(image.width, image.height, grid);
+  const out = cloneImage(image); // remainder border passes through untouched
+  const n = grid * grid;
+  for (let i = 0; i < n; i++) {
+    const destRect = tileRect(i, grid, tileW, tileH);
+    const srcSlot = perm[i];
+    const srcRect = tileRect(srcSlot, grid, tileW, tileH);
+    copyRect(image, srcRect, out, destRect);
+  }
+  return out;
+}
+
+// --- High-level pipeline ---------------------------------------------
+
+function scrambleImage(image, key) {
+  validateKey(key);
+  let buf = cloneImage(image);
+  if (key.flipH) buf = flipHorizontal(buf);
+  if (key.flipV) buf = flipVertical(buf);
+  if (key.invert) buf = invertColors(buf);
+  if (key.blockPermute) buf = blockPermuteForward(buf, key.seed, key.grid);
+  return buf;
+}
+
+function descrambleImage(image, key) {
+  validateKey(key);
+  let buf = cloneImage(image);
+  if (key.blockPermute) buf = blockPermuteInverse(buf, key.seed, key.grid);
+  if (key.invert) buf = invertColors(buf);
+  if (key.flipH) buf = flipHorizontal(buf);
+  if (key.flipV) buf = flipVertical(buf);
+  return buf;
+}
+
+// =========================================================================
+// End of the verbatim reference.mjs port. Everything below is page-specific
+// UI/demo code (synthetic scene generator, canvas wiring, controls) — this
+// part is NOT part of the ported contract math.
+// =========================================================================
+
+var CANVAS_W = 720;
+var CANVAS_H = 480;
+var MAX_LIVE_GRID = 4000; // performance guard only — never affects key/master-string validity
+
+var key = Object.assign({}, DEFAULT_KEY);
+var uploadedImage = null; // an HTMLImageElement, or null to use the synthetic scene
+
+var workCanvas = document.createElement("canvas");
+workCanvas.width = CANVAS_W;
+workCanvas.height = CANVAS_H;
+var workCtx = workCanvas.getContext("2d", { willReadFrequently: true });
+
+// --- element refs ---------------------------------------------------------
+
+var el = {
+  masterForm: document.getElementById("masterForm"),
+  masterInput: document.getElementById("masterInput"),
+  masterError: document.getElementById("masterError"),
+  resetDefaultBtn: document.getElementById("resetDefaultBtn"),
+  canonicalMaster: document.getElementById("canonicalMaster"),
+  seedInput: document.getElementById("seedInput"),
+  gridInput: document.getElementById("gridInput"),
+  flipHInput: document.getElementById("flipHInput"),
+  flipVInput: document.getElementById("flipVInput"),
+  invertInput: document.getElementById("invertInput"),
+  permuteInput: document.getElementById("permuteInput"),
+  advancedError: document.getElementById("advancedError"),
+  fileInput: document.getElementById("fileInput"),
+  useSyntheticBtn: document.getElementById("useSyntheticBtn"),
+  overlayNumbersInput: document.getElementById("overlayNumbersInput"),
+  perfWarning: document.getElementById("perfWarning"),
+  canvasOriginal: document.getElementById("canvasOriginal"),
+  canvasScrambled: document.getElementById("canvasScrambled"),
+  canvasDescrambled: document.getElementById("canvasDescrambled"),
+  verdict: document.getElementById("verdict"),
+};
+
+// --- synthetic scene -------------------------------------------------------
+// A generated (not loaded) image: gradients + shapes so it's recognizable,
+// plus per-tile index numbers overlaid according to the CURRENT grid so any
+// tile-shuffle/flip/invert bug is instantly visible. Generated on a same-
+// origin canvas via drawing calls only, so getImageData never taints it.
+
+function drawSyntheticScene(ctx, width, height) {
+  const sky = ctx.createLinearGradient(0, 0, 0, height);
+  sky.addColorStop(0, "#1b3a6b");
+  sky.addColorStop(0.55, "#ff9d5c");
+  sky.addColorStop(1, "#ffe1a8");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, width, height);
+
+  const sunX = width * 0.72, sunY = height * 0.36, sunR = Math.min(width, height) * 0.13;
+  const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunR);
+  sunGrad.addColorStop(0, "#fff6d0");
+  sunGrad.addColorStop(1, "#ffcf5c");
+  ctx.fillStyle = sunGrad;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#5b6ea8";
+  ctx.beginPath();
+  ctx.moveTo(0, height * 0.62);
+  ctx.lineTo(width * 0.18, height * 0.42);
+  ctx.lineTo(width * 0.34, height * 0.60);
+  ctx.lineTo(width * 0.52, height * 0.38);
+  ctx.lineTo(width * 0.70, height * 0.58);
+  ctx.lineTo(width * 0.86, height * 0.44);
+  ctx.lineTo(width, height * 0.60);
+  ctx.lineTo(width, height * 0.66);
+  ctx.lineTo(0, height * 0.66);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#2f6b4f";
+  ctx.beginPath();
+  ctx.moveTo(0, height * 0.74);
+  ctx.quadraticCurveTo(width * 0.25, height * 0.60, width * 0.5, height * 0.76);
+  ctx.quadraticCurveTo(width * 0.75, height * 0.88, width, height * 0.70);
+  ctx.lineTo(width, height);
+  ctx.lineTo(0, height);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(width * 0.30, height * 0.87, width * 0.16, height * 0.05, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#20222b";
+  ctx.lineWidth = 2;
+  const birds = [[width * 0.15, height * 0.16], [width * 0.22, height * 0.12], [width * 0.10, height * 0.22]];
+  for (const b of birds) {
+    const bx = b[0], by = b[1];
+    ctx.beginPath();
+    ctx.moveTo(bx - 8, by);
+    ctx.quadraticCurveTo(bx - 4, by - 6, bx, by);
+    ctx.quadraticCurveTo(bx + 4, by - 6, bx + 8, by);
+    ctx.stroke();
+  }
+}
+
+function overlayTileGrid(ctx, width, height, grid) {
+  const ts = tileSize(width, height, grid);
+  const tileW = ts.tileW, tileH = ts.tileH;
+  if (tileW <= 0 || tileH <= 0) return;
+  const usedW = tileW * grid, usedH = tileH * grid;
+  const n = grid * grid;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(0,0,0,0.28)";
+  ctx.lineWidth = 1;
+  for (let c = 1; c < grid; c++) {
+    ctx.beginPath();
+    ctx.moveTo(c * tileW + 0.5, 0);
+    ctx.lineTo(c * tileW + 0.5, usedH);
+    ctx.stroke();
+  }
+  for (let r = 1; r < grid; r++) {
+    ctx.beginPath();
+    ctx.moveTo(0, r * tileH + 0.5);
+    ctx.lineTo(usedW, r * tileH + 0.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save();
+  const fontSize = Math.max(8, Math.min(tileW, tileH) * 0.34);
+  ctx.font = `bold ${fontSize}px "Segoe UI", Arial, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(2, Math.min(tileW, tileH) * 0.07);
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  for (let idx = 0; idx < n; idx++) {
+    const rect = tileRect(idx, grid, tileW, tileH);
+    const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+    const label = String(idx);
+    ctx.strokeText(label, cx, cy);
+    ctx.fillText(label, cx, cy);
+  }
+  ctx.restore();
+
+  // mark the unpermuted remainder border, if any, so it's clearly explained
+  if (usedW < width || usedH < height) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(0.5, 0.5, usedW - 1, usedH - 1);
+    ctx.restore();
+  }
+}
+
+function drawCover(ctx, img, w, h) {
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  const scale = Math.max(w / iw, h / ih);
+  const dw = iw * scale, dh = ih * scale;
+  const dx = (w - dw) / 2, dy = (h - dh) / 2;
+  ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+function getOriginalImageData() {
+  workCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  if (uploadedImage) {
+    drawCover(workCtx, uploadedImage, CANVAS_W, CANVAS_H);
+  } else {
+    drawSyntheticScene(workCtx, CANVAS_W, CANVAS_H);
+  }
+  if (el.overlayNumbersInput.checked) {
+    overlayTileGrid(workCtx, CANVAS_W, CANVAS_H, key.grid);
+  }
+  const imgData = workCtx.getImageData(0, 0, CANVAS_W, CANVAS_H);
+  return { width: CANVAS_W, height: CANVAS_H, data: imgData.data };
+}
+
+function drawImageToCanvas(canvasEl, imageObj) {
+  canvasEl.width = imageObj.width;
+  canvasEl.height = imageObj.height;
+  const ctx = canvasEl.getContext("2d");
+  const imgData = new ImageData(imageObj.data, imageObj.width, imageObj.height);
+  ctx.putImageData(imgData, 0, 0);
+}
+
+// --- pixel compare / verdict ----------------------------------------------
+
+function compareAndShowVerdict(a, b) {
+  if (a.width !== b.width || a.height !== b.height) {
+    setVerdict("fail", `FAIL — size mismatch: original ${a.width}x${a.height} vs descrambled ${b.width}x${b.height}`);
+    return;
+  }
+  const da = a.data, db = b.data;
+  const channels = ["R", "G", "B", "A"];
+  for (let i = 0; i < da.length; i++) {
+    if (da[i] !== db[i]) {
+      const pixelIndex = Math.floor(i / 4);
+      const x = pixelIndex % a.width;
+      const y = Math.floor(pixelIndex / a.width);
+      const ch = channels[i % 4];
+      setVerdict(
+        "fail",
+        `FAIL — first differing pixel at (${x}, ${y}), channel ${ch}: original=${da[i]} descrambled=${db[i]}`
+      );
+      return;
+    }
+  }
+  setVerdict("pass", `PASS — Original and Descrambled are pixel-identical (${a.width}x${a.height}, ${da.length.toLocaleString()} bytes compared).`);
+}
+
+function setVerdict(kind, text) {
+  el.verdict.className = kind;
+  el.verdict.textContent = text;
+}
+
+// --- UI plumbing ------------------------------------------------------------
+
+function showMasterError(msg) {
+  el.masterError.textContent = msg;
+  el.masterError.classList.add("show");
+}
+function clearMasterError() {
+  el.masterError.textContent = "";
+  el.masterError.classList.remove("show");
+}
+function showAdvancedError(msg) {
+  el.advancedError.textContent = msg;
+  el.advancedError.classList.add("show");
+}
+function clearAdvancedError() {
+  el.advancedError.textContent = "";
+  el.advancedError.classList.remove("show");
+}
+function showPerfWarning(msg) {
+  el.perfWarning.textContent = msg;
+  el.perfWarning.classList.add("show");
+}
+function clearPerfWarning() {
+  el.perfWarning.textContent = "";
+  el.perfWarning.classList.remove("show");
+}
+
+function syncAdvancedControlsFromKey() {
+  el.seedInput.value = String(key.seed);
+  el.gridInput.value = String(key.grid);
+  el.flipHInput.checked = key.flipH;
+  el.flipVInput.checked = key.flipV;
+  el.invertInput.checked = key.invert;
+  el.permuteInput.checked = key.blockPermute;
+}
+
+function setKeyFromMaster(str) {
+  try {
+    const parsed = parseMasterString(str);
+    key = parsed;
+    clearMasterError();
+    syncAdvancedControlsFromKey();
+    clearAdvancedError();
+    recomputeAll();
+  } catch (err) {
+    // Parse rejected: leave current settings/canvases untouched, just report it.
+    showMasterError(err.message);
+  }
+}
+
+function updateKeyFromAdvanced() {
+  const seedRaw = Number(el.seedInput.value);
+  const gridRaw = Number(el.gridInput.value);
+  if (!Number.isInteger(seedRaw) || seedRaw < 0 || seedRaw > 4294967295) {
+    showAdvancedError(`seed must be an integer 0..4294967295, got "${el.seedInput.value}"`);
+    return;
+  }
+  if (!Number.isInteger(gridRaw) || gridRaw < 1) {
+    showAdvancedError(`grid must be an integer >= 1, got "${el.gridInput.value}"`);
+    return;
+  }
+  clearAdvancedError();
+  key = {
+    seed: seedRaw,
+    grid: gridRaw,
+    flipH: el.flipHInput.checked,
+    flipV: el.flipVInput.checked,
+    invert: el.invertInput.checked,
+    blockPermute: el.permuteInput.checked,
+    version: CONTRACT_VERSION,
+  };
+  recomputeAll();
+}
+
+function recomputeAll() {
+  try {
+    validateKey(key);
+    el.canonicalMaster.textContent = encodeMasterString(key);
+
+    if (key.grid > MAX_LIVE_GRID) {
+      clearPerfWarning();
+      showPerfWarning(
+        `grid=${key.grid} is a valid key (n=grid²=${(key.grid * key.grid).toLocaleString()}) but too large to render live in this page. ` +
+        `The master string above is still correct and accepted — pick a smaller grid to see the canvases update.`
+      );
+      setVerdict("pending", "Skipped live preview: grid too large for in-browser demo (see warning above). Key itself is valid.");
+      return;
+    }
+    clearPerfWarning();
+
+    const original = getOriginalImageData();
+    drawImageToCanvas(el.canvasOriginal, original);
+
+    const scrambled = scrambleImage(original, key);
+    drawImageToCanvas(el.canvasScrambled, scrambled);
+
+    const descrambled = descrambleImage(scrambled, key);
+    drawImageToCanvas(el.canvasDescrambled, descrambled);
+
+    compareAndShowVerdict(original, descrambled);
+  } catch (err) {
+    setVerdict("fail", `ERROR — ${err.message}`);
+  }
+}
+
+// --- wire up events ---------------------------------------------------------
+
+el.masterForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  setKeyFromMaster(el.masterInput.value);
+});
+
+el.resetDefaultBtn.addEventListener("click", function () {
+  key = Object.assign({}, DEFAULT_KEY);
+  el.masterInput.value = encodeMasterString(key);
+  clearMasterError();
+  syncAdvancedControlsFromKey();
+  clearAdvancedError();
+  recomputeAll();
+});
+
+[el.seedInput, el.gridInput, el.flipHInput, el.flipVInput, el.invertInput, el.permuteInput].forEach(function (input) {
+  input.addEventListener("input", updateKeyFromAdvanced);
+  input.addEventListener("change", updateKeyFromAdvanced);
+});
+
+el.overlayNumbersInput.addEventListener("change", recomputeAll);
+
+el.fileInput.addEventListener("change", function (e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    const img = new Image();
+    img.onload = function () {
+      uploadedImage = img;
+      recomputeAll();
+    };
+    img.onerror = function () {
+      setVerdict("fail", "ERROR — could not decode the selected image file.");
+    };
+    img.src = reader.result; // data: URL — same-origin, never taints the canvas
+  };
+  reader.onerror = function () {
+    setVerdict("fail", "ERROR — could not read the selected file.");
+  };
+  reader.readAsDataURL(file);
+});
+
+el.useSyntheticBtn.addEventListener("click", function () {
+  uploadedImage = null;
+  el.fileInput.value = "";
+  recomputeAll();
+});
+
+// --- initial state ------------------------------------------------------
+
+key = Object.assign({}, DEFAULT_KEY);
+el.masterInput.value = encodeMasterString(key);
+syncAdvancedControlsFromKey();
+recomputeAll();
+</script>
+
+</body>
+</html>

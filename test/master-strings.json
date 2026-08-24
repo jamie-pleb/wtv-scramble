@@ -1,0 +1,74 @@
+[
+  {
+    "key": {
+      "seed": 1337,
+      "grid": 9,
+      "flipH": true,
+      "flipV": false,
+      "invert": true,
+      "blockPermute": true,
+      "version": 1
+    },
+    "master": "WTV1-1337-9-HIP"
+  },
+  {
+    "key": {
+      "seed": 42,
+      "grid": 9,
+      "flipH": false,
+      "flipV": false,
+      "invert": false,
+      "blockPermute": false,
+      "version": 1
+    },
+    "master": "WTV1-42-9-0"
+  },
+  {
+    "key": {
+      "seed": 0,
+      "grid": 16,
+      "flipH": true,
+      "flipV": true,
+      "invert": true,
+      "blockPermute": true,
+      "version": 1
+    },
+    "master": "WTV1-0-16-HVIP"
+  },
+  {
+    "key": {
+      "seed": 4294967295,
+      "grid": 1,
+      "flipH": false,
+      "flipV": true,
+      "invert": false,
+      "blockPermute": false,
+      "version": 1
+    },
+    "master": "WTV1-4294967295-1-V"
+  },
+  {
+    "key": {
+      "seed": 7,
+      "grid": 5,
+      "flipH": false,
+      "flipV": false,
+      "invert": true,
+      "blockPermute": false,
+      "version": 1
+    },
+    "master": "WTV1-7-5-I"
+  },
+  {
+    "key": {
+      "seed": 123456789,
+      "grid": 12,
+      "flipH": true,
+      "flipV": false,
+      "invert": false,
+      "blockPermute": true,
+      "version": 1
+    },
+    "master": "WTV1-123456789-12-HP"
+  }
+]

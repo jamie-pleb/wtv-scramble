@@ -1,0 +1,169 @@
+// scramble.effect
+//
+// OBS effect (pixel shader) implementing the SCRAMBLE direction only
+// (source video -> scrambled output). The inverse ("descramble") is
+// applied separately, by a browser userscript. See ../../SPEC/contract.md
+// before changing this file, especially "Which array does which renderer
+// use?" and "Canonical pipeline order".
+//
+// Pipeline order per contract.md ("Scramble (OBS)"):
+//   flip (H then V, order between them doesn't matter) -> invert colors
+//   -> block-permute (using INV, not perm — see contract.md).
+//
+// A GPU pixel shader can only GATHER: for a given OUTPUT pixel, decide
+// which INPUT pixel to sample — it cannot "scatter" a source pixel to an
+// arbitrary destination. So instead of executing the three pipeline stages
+// as three sequential passes, this single pass walks the pipeline
+// BACKWARDS from the output pixel to find the one input-texture sample
+// (and post-sample color op) that reproduces it exactly:
+//
+//   1. block-permute (last stage applied): output pixel P belongs to tile
+//      s; the forward step placed source-buffer tile INV[s] into slot s
+//      (see contract.md's worked example), so we gather from the same
+//      pixel-offset inside tile INV[s] instead of tile s. Call this
+//      pre-permute position Q. Border pixels (outside the
+//      [0, tileW*grid) x [0, tileH*grid) permuted region) pass through
+//      with Q = P, unpermuted, exactly as blockPermuteForward() does in
+//      SPEC/reference.mjs.
+//   2. invert colors (middle stage): self-inverse, so it becomes a
+//      post-sample `color.rgb = 1.0 - color.rgb` applied AFTER sampling,
+//      not a coordinate transform.
+//   3. flip H/V (first stage applied, closest to the original texture):
+//      flip is also self-inverse (mirroring the same coordinate a second
+//      time recovers the original), so to find where in the ORIGINAL
+//      (pre-flip) texture Q's pixel lives, mirror Q's coordinate again:
+//      original texture position = mirror(Q).
+//
+// So: out_color(P) = invert( image.Sample( mirror( permute_gather(P) ) ) )
+// — i.e. permute first, then mirror, then sample, then invert — which is
+// the reverse walk of flip -> invert -> permute, and is algebraically
+// exactly scrambleImage() from SPEC/reference.mjs for every pixel.
+//
+// Tile geometry matches SPEC/contract.md's "Tile geometry" section:
+// tileW = floor(width/grid), tileH = floor(height/grid); only the
+// [0, tileW*grid) x [0, tileH*grid) region is permuted, the remainder
+// border passes through unpermuted; flip/invert apply to the FULL frame
+// including the border. UV sampling is continuous rather than the
+// canvas/CPU implementation's integer arithmetic, so tile boundaries here
+// coincide with the reference's boundaries to sub-pixel precision, not
+// bit-exact across languages — contract.md notes this is expected and
+// visually indistinguishable, unlike the perm/inv direction, which is a
+// correctness bug if it's wrong.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+
+// grid x grid, single-channel (GS_R32F) LUT: inv_tex[row][col] holds
+// inv[row*grid + col] as a float (see scramble-filter.c
+// scramble_filter_rebuild_lut()). perm_tex is uploaded alongside it for
+// parity with the contract's "both sides should compute both perm and inv"
+// note (and potential future tooling); this scramble-only shader does not
+// currently sample it.
+uniform texture2d inv_tex;
+uniform texture2d perm_tex;
+
+uniform int grid;
+uniform float2 frame_size; // full frame size in pixels: (width, height)
+uniform bool flip_h;
+uniform bool flip_v;
+uniform bool do_invert;
+uniform bool block_permute;
+
+sampler_state image_sampler {
+    Filter    = Point;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+sampler_state lut_sampler {
+    Filter    = Point;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+    VertData vert_out;
+    vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    vert_out.uv  = v_in.uv;
+    return vert_out;
+}
+
+// Mirrors a pixel-space coordinate per the enabled flip axes. Self-inverse:
+// calling this twice on the same input (with the same flags) returns the
+// original coordinate, which is exactly why it is reused here both
+// conceptually (flip is self-inverse in the pipeline) and literally (same
+// function used to find the pre-flip source position).
+float2 mirror_px(float2 px)
+{
+    if (flip_h)
+        px.x = frame_size.x - px.x;
+    if (flip_v)
+        px.y = frame_size.y - px.y;
+    return px;
+}
+
+float4 PSScramble(VertData v_in) : TARGET
+{
+    float2 px = v_in.uv * frame_size;
+    float2 src_px = px; // default: unpermuted (also the border-passthrough case)
+
+    if (block_permute && grid > 0) {
+        float gridf = (float)grid;
+        float tile_w = floor(frame_size.x / gridf);
+        float tile_h = floor(frame_size.y / gridf);
+        float used_w = tile_w * gridf;
+        float used_h = tile_h * gridf;
+
+        // Only the [0, tileW*grid) x [0, tileH*grid) region is permuted;
+        // the remainder border passes through unpermuted (src_px == px).
+        if (tile_w > 0.0 && tile_h > 0.0 && px.x < used_w && px.y < used_h) {
+            float col = clamp(floor(px.x / tile_w), 0.0, gridf - 1.0);
+            float row = clamp(floor(px.y / tile_h), 0.0, gridf - 1.0);
+            float s = row * gridf + col;
+
+            // inv_tex[row][col] = inv[s]; sample at the LUT texel center.
+            float2 lut_uv = float2((col + 0.5) / gridf, (row + 0.5) / gridf);
+            float src_idx = inv_tex.Sample(lut_sampler, lut_uv).r;
+
+            // src_col = src_idx % grid, computed via floor() rather than
+            // fmod() -- fmod is not consistently available across OBS's
+            // per-backend shader translation, floor()/multiply always is.
+            float src_row = floor(src_idx / gridf);
+            float src_col = src_idx - src_row * gridf;
+
+            float off_x = px.x - col * tile_w;
+            float off_y = px.y - row * tile_h;
+
+            src_px = float2(src_col * tile_w + off_x, src_row * tile_h + off_y);
+        }
+    }
+
+    // Undo the flip that (conceptually) happened before block-permute in
+    // the scramble pipeline, to find the ORIGINAL texture's pixel. See the
+    // file header comment above for the full derivation.
+    float2 orig_px = mirror_px(src_px);
+    float2 orig_uv = orig_px / frame_size;
+
+    float4 color = image.Sample(image_sampler, orig_uv);
+
+    if (do_invert) {
+        color.rgb = 1.0 - color.rgb; // invert RGB only, alpha untouched
+    }
+
+    return color;
+}
+
+technique Draw
+{
+    pass
+    {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSScramble(v_in);
+    }
+}
