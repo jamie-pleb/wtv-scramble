@@ -1,15 +1,15 @@
 # w.tv Descramble
 
-A scrambled-broadcast + decoder pair for a streamer's **own** [w.tv](https://w.tv) stream —
-the software equivalent of the old analog scrambled-cable channels that needed a decoder box.
-The streamer mangles their own outgoing video with an OBS filter (tile-shuffle, flip, color
-invert); only viewers running a matching browser script, with the matching "key", see clear
-video. Everyone else just sees noise.
+A scrambled-broadcast + decoder pair for a streamer's **own** [w.tv](https://w.tv) or
+[Kick](https://kick.com) stream — the software equivalent of the old analog scrambled-cable
+channels that needed a decoder box. The streamer mangles their own outgoing video with an OBS
+filter (tile-shuffle, flip, color invert); only viewers running a matching browser script, with
+the matching "key", see clear video. Everyone else just sees noise.
 
 **This does not bypass anything.** It only transforms the streamer's own pixels before they
-leave OBS. It does not touch, remove, or interact with w.tv's own access controls, DRM, or
-paywalls in any way — it's a picture-scrambling effect layered on top of a stream the streamer
-already has the right to publish, not a way to unlock someone else's stream.
+leave OBS. It does not touch, remove, or interact with either platform's own access controls,
+DRM, or paywalls in any way — it's a picture-scrambling effect layered on top of a stream the
+streamer already has the right to publish, not a way to unlock someone else's stream.
 
 Both halves are driven by one shared secret: the **key**. Get the same key into both sides and
 the picture resolves; get it wrong (or leave it out) and you see scrambled/garbled video —
@@ -103,7 +103,7 @@ paste them into a new Tampermonkey script.)
 
 ### 3. Open the channel and paste the key
 
-Visit the streamer's w.tv channel. A small panel appears in a corner of the page. Open it and
+Visit the streamer's w.tv or Kick channel. A small panel appears in a corner of the page. Open it and
 paste the **Master String** the streamer gave you (e.g. `WTV1-1337-9-HIP`) into the Master
 String field, then apply it. You'll get a clear green confirmation if it parsed and applied,
 or a red error if it didn't — a bad paste never silently does the wrong thing, it just tells
@@ -123,7 +123,7 @@ The panel has one big ON/OFF toggle at the top:
   native player controls and volume behaving normally, and a stream that was never scrambled
   in the first place looks completely normal too.
 
-Flip it OFF when you're watching a normal (non-scrambled) w.tv stream, and back ON when you're
+Flip it OFF when you're watching a normal (non-scrambled) stream, and back ON when you're
 watching a scrambled one. Your setting is remembered between visits.
 
 ### Advanced section

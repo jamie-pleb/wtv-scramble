@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         w.tv Descrambler
 // @namespace    https://github.com/jamie-pleb/wtv-scramble
-// @version      1.3.0
-// @description  Descrambles a live w.tv video stream in real time, undoing the matching OBS "scramble" filter using a shared key.
+// @version      1.4.0
+// @description  Descrambles a live w.tv or Kick.com video stream in real time, undoing the matching OBS "scramble" filter using a shared key.
 // @author       jamie-pleb
 // @match        https://w.tv/*
+// @match        https://kick.com/*
 // @run-at       document-idle
 // @grant        none
 // @homepageURL  https://github.com/jamie-pleb/wtv-scramble
@@ -382,17 +383,53 @@
   }
 
   // =========================================================================
-  // Player detection
+  // Player detection — per-site selector profiles. Each supported site
+  // (see @match above) gets its own primary/fallback CSS selector pair,
+  // verified against that site's live DOM before shipping (see the comment
+  // on each profile). The active profile is picked once from
+  // location.hostname at load time and reused for the page's whole
+  // lifetime — a site's own client-side navigation never changes its own
+  // hostname, so there's nothing to recompute later.
   // =========================================================================
 
-  // data-testid is far more stable across Nuxt/Vue builds than the hashed
-  // class names or even the id, but keep #videoPlayer as a fallback in case
-  // a future markup change drops the testid.
-  const VIDEO_SELECTOR_PRIMARY = 'video[data-testid="stream-player-video"]';
-  const VIDEO_SELECTOR_FALLBACK = '#videoPlayer';
+  const SITE_PROFILES = [
+    {
+      id: 'wtv',
+      hostTest: (h) => h === 'w.tv' || h.endsWith('.w.tv'),
+      // data-testid is far more stable across Nuxt/Vue builds than the
+      // hashed class names or even the id, but keep #videoPlayer as a
+      // fallback in case a future markup change drops the testid.
+      primarySelector: 'video[data-testid="stream-player-video"]',
+      fallbackSelector: '#videoPlayer',
+    },
+    {
+      id: 'kick',
+      hostTest: (h) => h === 'kick.com' || h.endsWith('.kick.com'),
+      // Verified against a live channel (kick.com/sliker): the real player
+      // is <video id="video-player">, nested under #injected-channel-player,
+      // inside a position:relative div — the same layout precondition the
+      // overlay-positioning code below assumes.
+      //
+      // Kick's page ALSO always contains a second, unrelated <video> with no
+      // id, permanently 0x0/hidden, living inside a <video-player> custom
+      // element, whose currentSrc is a static "black_2s.mp4" ad-warmup clip
+      // — not the stream. The id selector can't accidentally match it (it
+      // has no id), and the fallback below is deliberately scoped to
+      // #injected-channel-player rather than any bare "video-player video"
+      // selector, which WOULD match that ad placeholder instead.
+      primarySelector: 'video#video-player',
+      fallbackSelector: '#injected-channel-player video',
+    },
+  ];
+
+  const activeSiteProfile = SITE_PROFILES.find((p) => p.hostTest(location.hostname)) || null;
 
   function findVideo() {
-    return document.querySelector(VIDEO_SELECTOR_PRIMARY) || document.querySelector(VIDEO_SELECTOR_FALLBACK);
+    if (!activeSiteProfile) return null; // shouldn't happen given @match above, but degrade safely rather than throw
+    return (
+      document.querySelector(activeSiteProfile.primarySelector) ||
+      (activeSiteProfile.fallbackSelector ? document.querySelector(activeSiteProfile.fallbackSelector) : null)
+    );
   }
 
   // =========================================================================

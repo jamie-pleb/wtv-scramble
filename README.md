@@ -8,16 +8,16 @@
 have one). It auto-updates from there. Everything below is for streamers setting up the OBS
 side, or anyone who wants the technical details.
 
-A scrambled-broadcast + decoder pair for a streamer's **own** [w.tv](https://w.tv) stream —
-the software equivalent of the old analog scrambled-cable channels that needed a decoder box.
-An OBS filter mangles the streamer's own outgoing video (tile-shuffle, color invert, flip);
-only viewers running a matching browser script, holding the matching key, see clear video.
-Everyone else just sees noise.
+A scrambled-broadcast + decoder pair for a streamer's **own** [w.tv](https://w.tv) or
+[Kick](https://kick.com) stream — the software equivalent of the old analog scrambled-cable
+channels that needed a decoder box. An OBS filter mangles the streamer's own outgoing video
+(tile-shuffle, color invert, flip); only viewers running a matching browser script, holding the
+matching key, see clear video. Everyone else just sees noise.
 
 **This does not bypass anything.** It transforms only the broadcaster's own outgoing pixels
-before they leave OBS. It does not touch, remove, or interact with w.tv's own access controls,
-DRM, or paywalls in any way — it's a picture-scrambling effect layered on top of a stream the
-streamer already has the right to publish, not a way to unlock someone else's stream.
+before they leave OBS. It does not touch, remove, or interact with either platform's own access
+controls, DRM, or paywalls in any way — it's a picture-scrambling effect layered on top of a
+stream the streamer already has the right to publish, not a way to unlock someone else's stream.
 
 ## Quick start
 
